@@ -3,6 +3,7 @@
 package views
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -80,15 +81,79 @@ func (cv *ChatView) refreshViewport() {
 	cv.Viewport.GotoBottom()
 }
 
+// renderContent splits content on code fences, adding line numbers to code blocks.
+func renderContent(content string, maxWidth int) string {
+	if maxWidth < 4 {
+		maxWidth = 4
+	}
+	var sb strings.Builder
+	// Split on ``` boundaries; even indices = prose, odd = code
+	parts := strings.Split(content, "```")
+	for i, part := range parts {
+		if i%2 == 0 {
+			// Prose
+			if part != "" {
+				sb.WriteString(wrapText(part, maxWidth))
+			}
+		} else {
+			// Code block: first line may be language tag
+			before, after, ok := strings.Cut(part, "\n")
+			lang := ""
+			code := part
+			if ok {
+				lang = strings.TrimSpace(before)
+				code = after
+			}
+			sb.WriteString(renderCodeBlock(lang, strings.TrimRight(code, "\n"), maxWidth))
+		}
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+// renderCodeBlock formats a code snippet with gutter line numbers.
+func renderCodeBlock(lang, code string, maxWidth int) string {
+	lines := strings.Split(code, "\n")
+	numW := len(fmt.Sprintf("%d", len(lines))) // gutter width
+	barW := maxWidth - numW - 3                // content area: " N │ code"
+
+	var sb strings.Builder
+
+	// Header bar  ──  lang  ────────────
+	langLabel := lang
+	if langLabel == "" {
+		langLabel = "text"
+	}
+	headerPad := max(maxWidth-len(langLabel)-2, 0)
+	sb.WriteString(
+		styles.Muted.Render(" "+langLabel+strings.Repeat("─", headerPad)) + "\n",
+	)
+
+	for i, line := range lines {
+		// Truncate long lines to avoid viewport overflow
+		if len(line) > barW && barW > 3 {
+			line = line[:barW-1] + "…"
+		}
+		gutter := styles.Muted.Render(fmt.Sprintf("%*d │ ", numW, i+1))
+		code := styles.ReportCode.Render(line)
+		sb.WriteString(gutter + code + "\n")
+	}
+
+	// Footer separator
+	sb.WriteString(styles.Muted.Render(strings.Repeat("─", maxWidth)) + "\n")
+	return sb.String()
+}
+
+// renderMessages re-renders all chat messages into a single string for the viewport.
 func (cv *ChatView) renderMessages() string {
 	var sb strings.Builder
-	msgWidth := cv.Width - 6
+	// Use viewport width for accurate wrapping; subtract bubble's left border + padding
+	msgWidth := max(cv.Viewport.Width-2, 20)
 
 	for _, m := range cv.Messages {
 		switch m.Role {
 		case "user":
 			label := styles.UserLabel.Render("  you")
-			content := wrapText(m.Content, msgWidth)
+			content := renderContent(m.Content, msgWidth)
 			bubble := styles.UserBubble.Width(msgWidth).Render(content)
 			sb.WriteString(label + "\n" + bubble + "\n")
 
@@ -97,7 +162,7 @@ func (cv *ChatView) renderMessages() string {
 			if m.Partial {
 				label = styles.AssistantLabel.Render("  cowork ▌")
 			}
-			content := wrapText(m.Content, msgWidth)
+			content := renderContent(m.Content, msgWidth)
 			bubble := styles.AssistantBubble.Width(msgWidth).Render(content)
 			sb.WriteString(label + "\n" + bubble + "\n")
 

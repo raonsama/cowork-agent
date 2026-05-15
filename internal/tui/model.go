@@ -44,8 +44,9 @@ type Model struct {
 	cancelFn context.CancelFunc
 
 	// Dimensions
-	width  int
-	height int
+	width           int
+	height          int
+	userToggledLogs bool
 
 	// Sub-views
 	chat    views.ChatView
@@ -117,6 +118,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.ready = true
+		if !m.userToggledLogs {
+			m.showLogs = m.width >= 130
+		}
 		m.relayout()
 
 	case tea.KeyMsg:
@@ -150,6 +154,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "ctrl+l":
 			m.showLogs = !m.showLogs
+			m.userToggledLogs = true // ← mark as manual override
 			m.relayout()
 
 		case "pgup":
@@ -186,28 +191,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ── Final report ──────────────────────────────────
 		if ev.Final != nil {
 			m.finalReport = ev.Final
-			m.mode = ModeReport
+			m.mode = ModeChat // ← was ModeReport; now allow new input
 			m.phase = "done"
 			m.chat.AppendMessage("assistant", ev.Final.Markdown())
+			m.chat.Input.Focus() // ← re-focus textarea
 		}
 
 		// ── Error ─────────────────────────────────────────
 		if ev.Err != nil {
 			m.err = ev.Err
 			m.phase = "error"
+			m.mode = ModeChat // ← unlock input on error too
 			m.logs.Add(views.LevelError, "error", ev.Err.Error(), "")
-			m.chat.AppendMessage("system", "❌ "+ev.Err.Error())
+			// m.chat.AppendMessage("system", "❌ "+ev.Err.Error())
+			m.chat.Input.Focus()
 		}
 
 		// ── Chat streaming (conversational mode) ──────────
-		// PhaseIdle + Message with no ToolName = streamed chat token.
 		if ev.Phase == agent.PhaseIdle && ev.Message != "" && ev.ToolName == "" {
 			m.chat.StreamToken(ev.Message)
 		}
 
 		// ── Done: finalize streamed chat bubble ───────────
-		if ev.Phase == agent.PhaseDone && ev.Final == nil && ev.Message != "" {
-			m.chat.FinalizeStream()
+		if ev.Phase == agent.PhaseDone && ev.Final == nil {
+			if ev.Message != "" {
+				m.chat.FinalizeStream()
+			}
+			m.mode = ModeChat // ← was missing; unlock input
+			m.phase = "done"
+			m.chat.Input.Focus() // ← re-focus textarea
 		}
 
 		// ── Log panel entries (non-streaming) ─────────────
@@ -289,14 +301,15 @@ func (m Model) View() string {
 	var body string
 	chatH := m.height - lipgloss.Height(header) - lipgloss.Height(m.status.Render()) - 1
 
+	m.chat.Height = chatH
+	m.chat.Viewport.Height = chatH - borderX - inputH
+
 	if m.showLogs {
 		chatW := m.width * 7 / 10
 		logW := (m.width - 4) - chatW - 1
 
 		m.chat.Width = chatW
-		m.chat.Height = chatH
 		m.chat.Viewport.Width = chatW - borderX - padX
-		m.chat.Viewport.Height = chatH - borderX - inputH - 2
 
 		m.logs.Width = logW
 		m.logs.Height = chatH
@@ -305,12 +318,10 @@ func (m Model) View() string {
 		logPanel := styles.AppBorder.Width(logW - 2).Height(chatH - 2).Render(m.logs.Render())
 		body = lipgloss.JoinHorizontal(lipgloss.Top, chatPanel, " ", logPanel)
 	} else {
-		m.chat.Width = m.width
-		m.chat.Height = chatH
+		m.chat.Width = m.width - 4
 		m.chat.Viewport.Width = m.width - borderX - padX
-		m.chat.Viewport.Height = chatH - 6
 
-		body = styles.AppBorder.Width(m.width - 2).Height(chatH - 2).Render(m.chat.Render())
+		body = styles.AppBorder.Width(m.width - 6).Height(chatH - 2).Render(m.chat.Render())
 	}
 
 	content := lipgloss.NewStyle().
