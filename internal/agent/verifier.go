@@ -82,15 +82,15 @@ func (v *Verifier) VerifyBuild(ctx context.Context, buildOutput string) Verdict 
 // parseVerdict parses the structured LLM verifier response.
 func parseVerdict(raw string) Verdict {
 	var v Verdict
-	for _, line := range strings.Split(raw, "\n") {
+	for line := range strings.SplitSeq(raw, "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "PASSED:") {
-			val := strings.TrimSpace(strings.TrimPrefix(line, "PASSED:"))
+		if after, ok := strings.CutPrefix(line, "PASSED:"); ok {
+			val := strings.TrimSpace(after)
 			v.Passed = strings.EqualFold(val, "yes")
-		} else if strings.HasPrefix(line, "REASON:") {
-			v.Reason = strings.TrimSpace(strings.TrimPrefix(line, "REASON:"))
-		} else if strings.HasPrefix(line, "SUGGEST:") {
-			v.Suggest = strings.TrimSpace(strings.TrimPrefix(line, "SUGGEST:"))
+		} else if after, ok := strings.CutPrefix(line, "REASON:"); ok {
+			v.Reason = strings.TrimSpace(after)
+		} else if after, ok := strings.CutPrefix(line, "SUGGEST:"); ok {
+			v.Suggest = strings.TrimSpace(after)
 			if strings.EqualFold(v.Suggest, "none") {
 				v.Suggest = ""
 			}

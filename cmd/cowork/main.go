@@ -22,6 +22,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/raonsama/cowork-agent/internal/config"
 	"github.com/raonsama/cowork-agent/internal/tui"
@@ -59,14 +60,14 @@ var coworkCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("config load failed: %w", err)
 		}
-		task := ""
+		var task strings.Builder
 		for i, a := range args {
 			if i > 0 {
-				task += " "
+				task.WriteString(" ")
 			}
-			task += a
+			task.WriteString(a)
 		}
-		app := tui.NewWithTask(cfg, task)
+		app := tui.NewWithTask(cfg, task.String())
 		return app.Run()
 	},
 }

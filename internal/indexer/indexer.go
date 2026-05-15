@@ -104,9 +104,7 @@ func (idx *Indexer) IndexProject(root string) error {
 
 	var wg sync.WaitGroup
 	for i := 0; i < idx.workerCount; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for j := range jobCh {
 				sym, err := idx.indexFile(j.path)
 				mu.Lock()
@@ -121,7 +119,7 @@ func (idx *Indexer) IndexProject(root string) error {
 				}
 				mu.Unlock()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	return nil

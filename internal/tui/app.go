@@ -5,6 +5,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/raonsama/cowork-agent/internal/agent"
@@ -96,18 +97,15 @@ func (a *App) runIndexer() error {
 
 func mkBar(done, total, width int) string {
 	fill := func(s string, n int) string {
-		r := ""
-		for i := 0; i < n; i++ {
-			r += s
+		var r strings.Builder
+		for range n {
+			r.WriteString(s)
 		}
-		return r
+		return r.String()
 	}
 	if total == 0 {
 		return "[" + fill("·", width) + "]"
 	}
-	f := width * done / total
-	if f > width {
-		f = width
-	}
+	f := min(width*done/total, width)
 	return "[" + fill("█", f) + fill("·", width-f) + "]"
 }

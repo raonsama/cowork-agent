@@ -82,17 +82,11 @@ func (lp *LogPanel) Render() string {
 	// Trim to visible window
 	visible := rendered
 	if len(visible) > availH {
-		start := lp.scrollTo - availH + 1
-		if start < 0 {
-			start = 0
-		}
+		start := max(lp.scrollTo-availH+1, 0)
 		end := start + availH
 		if end > len(visible) {
 			end = len(visible)
-			start = end - availH
-			if start < 0 {
-				start = 0
-			}
+			start = max(end-availH, 0)
 		}
 		visible = visible[start:end]
 	}

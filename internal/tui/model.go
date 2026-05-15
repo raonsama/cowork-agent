@@ -20,11 +20,9 @@ import (
 
 // ── Messages (bubbletea Msg types) ───────────────────────────────────────────
 type (
-	agentEventMsg  agent.Event
-	thermalMsg     thermal.Status
-	streamTokenMsg string
-	tickMsg        time.Time
-	windowSizeMsg  tea.WindowSizeMsg
+	agentEventMsg agent.Event
+	thermalMsg    thermal.Status
+	tickMsg       time.Time
 )
 
 // ── Model ─────────────────────────────────────────────────────────────────────
@@ -213,7 +211,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// ── Log panel entries (non-streaming) ─────────────
-		if ev.Message != "" && !(ev.Phase == agent.PhaseIdle && ev.ToolName == "") {
+		if ev.Message != "" && (ev.Phase != agent.PhaseIdle || ev.ToolName != "") {
 			level := views.LevelInfo
 			switch {
 			case ev.Phase == agent.PhaseDone:
@@ -340,10 +338,7 @@ func (m Model) renderHeader() string {
 	left := title + sub + spin
 	right := hint
 
-	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 4
-	if pad < 0 {
-		pad = 0
-	}
+	pad := max(m.width-lipgloss.Width(left)-lipgloss.Width(right)-4, 0)
 
 	row := left + fmt.Sprintf("%*s", pad, "") + right
 	return styles.HeaderBar.Width(m.width).Render(row)

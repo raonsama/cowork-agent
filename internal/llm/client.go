@@ -24,7 +24,7 @@ type GenerateRequest struct {
 	Model    string    `json:"model"`
 	Messages []Message `json:"messages"`
 	Stream   bool      `json:"stream"`
-	Options  Options   `json:"options,omitempty"`
+	Options  Options   `json:"options"`
 }
 
 // Options holds Ollama model parameters.
@@ -246,14 +246,14 @@ func (c *Client) Chat(ctx context.Context, messages []Message, opts Options) (<-
 // ChatSync sends a conversation and returns the full response (non-streaming).
 func (c *Client) ChatSync(ctx context.Context, messages []Message, opts Options) (string, error) {
 	tokenCh, errCh := c.Chat(ctx, messages, opts)
-	var result string
+	var result strings.Builder
 	for token := range tokenCh {
-		result += token
+		result.WriteString(token)
 	}
 	if err := <-errCh; err != nil {
-		return result, err
+		return result.String(), err
 	}
-	return result, nil
+	return result.String(), nil
 }
 
 // Ping checks if Ollama is reachable.

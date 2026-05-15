@@ -139,7 +139,7 @@ func wrapText(s string, maxWidth int) string {
 		return s
 	}
 	var result strings.Builder
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		if len(line) <= maxWidth {
 			result.WriteString(line + "\n")
 			continue
