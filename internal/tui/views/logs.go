@@ -1,3 +1,5 @@
+// Package views — this file implements LogPanel, a scrollable structured
+// log display that surfaces agent phase events in real time.
 package views
 
 import (

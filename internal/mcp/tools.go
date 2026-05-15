@@ -156,6 +156,27 @@ func (s *Server) registerDefaults() {
 				"staged": {Type: "boolean", Description: "Show staged diff (default: false)"},
 			},
 		}, sh.GitDiff)
+
+	s.Register(
+		ToolSearchCode, "Search the indexed codebase using full-text search.",
+		Schema{
+			Type: "object",
+			Properties: map[string]Property{
+				"query": {Type: "string", Description: "Search terms to match against symbol names, signatures, and bodies"},
+				"limit": {Type: "integer", Description: "Maximum results to return (default: 5)"},
+			},
+			Required: []string{"query"},
+		},
+		func(_ context.Context, raw json.RawMessage) ToolResult {
+			// The agent pre-fetches context via searchContext(); this handler
+			// returns a sentinel so the verifier knows the call was valid.
+			return ToolResult{
+				Tool:    ToolSearchCode,
+				Success: true,
+				Output:  "(search_code is resolved by the agent context pipeline — see pre-fetched context block above)",
+			}
+		},
+	)
 }
 
 // Register adds a tool with its definition and handler.

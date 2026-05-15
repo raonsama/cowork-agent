@@ -1,3 +1,6 @@
+// Package config provides runtime configuration loading and persistence
+// for CoworkAgent. Settings are read from ~/.config/cowork-agent/config.json
+// and can be overridden per-run from the SQLite settings table.
 package config
 
 import (
@@ -32,13 +35,22 @@ type Config struct {
 
 	// Project
 	ProjectRoot string `json:"project_root"`
+
+	// Feature toggles — persisted in SQLite settings table as well.
+	// PlannerEnabled controls whether the LLM-based planner is active.
+	// When false the raw task is executed as a single run_shell step.
+	PlannerEnabled bool `json:"planner_enabled"`
+
+	// VerifierEnabled controls whether step results are LLM-verified.
+	// When false only the heuristic (error-string) check is applied.
+	VerifierEnabled bool `json:"verifier_enabled"`
 }
 
 func defaults() *Config {
 	home, _ := os.UserHomeDir()
 	return &Config{
-		OllamaBaseURL:           "http://localhost:11434",
-		DefaultModel:            "qwen2.5-coder:7b",
+		OllamaBaseURL:           "http://127.0.0.1:11434",
+		DefaultModel:            "qwen3.5-uncen:2b",
 		MaxTokens:               2048,
 		ContextWindow:           4096,
 		DBPath:                  filepath.Join(home, ".local", "share", "cowork-agent", "index.db"),
@@ -50,6 +62,8 @@ func defaults() *Config {
 		BranchPrefix:            "cowork",
 		TermuxNotifyEnabled:     true,
 		ProjectRoot:             ".",
+		PlannerEnabled:          false,
+		VerifierEnabled:         false,
 	}
 }
 

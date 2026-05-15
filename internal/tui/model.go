@@ -1,3 +1,6 @@
+// Package tui — this file contains the central Bubble Tea Model,
+// handling all message dispatch, state transitions, and view composition
+// for both interactive-chat and autonomous-cowork modes.
 package tui
 
 import (

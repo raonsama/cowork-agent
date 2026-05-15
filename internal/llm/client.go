@@ -1,3 +1,5 @@
+// Package llm provides a thin client for the Ollama /api/chat endpoint,
+// supporting both streaming and synchronous completion modes.
 package llm
 
 import (

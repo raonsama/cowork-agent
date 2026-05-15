@@ -1,3 +1,5 @@
+// Package agent implements the autonomous cowork engine, orchestrating
+// LLM-driven planning, MCP tool execution, and result verification.
 package agent
 
 import (
@@ -115,23 +117,36 @@ func (a *Agent) Run(ctx context.Context, task string) {
 	// ── Shadow workspace ─────────────────────────────────────
 	ws := shadow.NewWorkspace(a.cfg.ProjectRoot, a.cfg.BranchPrefix)
 	if err := ws.Begin(task); err != nil {
+		// Non-fatal: work on the current branch.
+		a.emit(Event{Phase: PhasePlan, Message: "⚠️  Shadow workspace unavailable — working on current branch"})
+	} else {
+		// BUG FIX: defer must be in the success branch so it runs when
+		// Begin succeeds and the context is later cancelled by the user.
 		defer func() {
-			if ctx.Err() != nil { // dibatalkan user
+			if ctx.Err() != nil {
 				_ = ws.Abort()
 			}
 		}()
-		// Non-fatal: continue without shadow workspace (e.g., no git repo)
-		a.emit(Event{Phase: PhasePlan, Message: "⚠️  Shadow workspace unavailable — working on current branch"})
-	} else {
 		a.emit(Event{Phase: PhasePlan, Branch: ws.BranchName(), Message: "Shadow branch: " + ws.BranchName()})
 	}
 
 	// ── Plan ─────────────────────────────────────────────────
 	a.emit(Event{Phase: PhasePlan, Message: "Decomposing task into steps…"})
-	plan, err := a.planner.CreatePlan(ctx, task)
-	if err != nil {
-		a.emit(Event{Phase: PhaseError, Err: err})
-		return
+	var plan *Plan
+	if a.cfg.PlannerEnabled {
+		var err error
+		plan, err = a.planner.CreatePlan(ctx, task)
+		if err != nil {
+			a.emit(Event{Phase: PhaseError, Err: err})
+			return
+		}
+	} else {
+		// No-op planner: single shell step.
+		plan = &Plan{
+			Task:    task,
+			Steps:   []Step{{ID: 1, Description: task, ToolHint: "run_shell"}},
+			Summary: task,
+		}
 	}
 	a.emit(Event{Phase: PhasePlan, Message: fmt.Sprintf("Plan ready: %d steps — %s", len(plan.Steps), plan.Summary)})
 
@@ -189,7 +204,11 @@ func (a *Agent) Run(ctx context.Context, task string) {
 
 			// Verify
 			a.emit(Event{Phase: PhaseVerify, StepID: step.ID, Message: "Verifying result…"})
-			verdict, _ = a.verifier.Verify(ctx, *step, toolResult.Output+toolResult.Error)
+			if a.cfg.VerifierEnabled {
+				verdict, _ = a.verifier.Verify(ctx, *step, toolResult.Output+toolResult.Error)
+			} else {
+				verdict = heuristicVerdict(toolResult.Output + toolResult.Error)
+			}
 
 			if verdict.Passed || retries >= maxRetries {
 				break

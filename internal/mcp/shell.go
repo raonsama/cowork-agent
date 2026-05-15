@@ -1,3 +1,5 @@
+// Package mcp implements the Model Context Protocol tool server,
+// providing filesystem, shell, and git tools for the agent to invoke.
 package mcp
 
 import (

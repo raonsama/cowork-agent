@@ -1,3 +1,5 @@
+// Package thermal monitors device temperature and CPU load via sysfs and
+// /proc/stat, throttling the agent when thresholds are exceeded.
 package thermal
 
 import (

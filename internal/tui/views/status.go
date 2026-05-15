@@ -1,3 +1,5 @@
+// Package views — this file implements StatusBar, the bottom strip that
+// shows the current agent phase, active branch, thermal state, and token usage.
 package views
 
 import (

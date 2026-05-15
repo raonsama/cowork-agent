@@ -1,3 +1,5 @@
+// Package termux wraps the termux-api notification and vibration commands,
+// silently disabling itself in non-Termux environments.
 package termux
 
 import (

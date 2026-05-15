@@ -1,3 +1,5 @@
+// Package views contains the individual UI panels rendered by the TUI model.
+// This file implements ChatView: the conversation viewport and textarea input.
 package views
 
 import (

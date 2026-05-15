@@ -1,3 +1,5 @@
+// Package shadow manages temporary Git branches that isolate agent-produced
+// changes until the user reviews and merges them.
 package shadow
 
 import (

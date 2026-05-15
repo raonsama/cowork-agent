@@ -1,3 +1,6 @@
+// Package tui is the top-level TUI controller for CoworkAgent.
+// It wires together the Bubble Tea program, the agent, and the indexer,
+// and selects the correct run mode (interactive, cowork, or index).
 package tui
 
 import (

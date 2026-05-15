@@ -1,3 +1,4 @@
+// Package indexer manages the SQLite-backed code symbol index.
 package indexer
 
 import (

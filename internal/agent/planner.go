@@ -1,3 +1,4 @@
+// Package agent implements the autonomous cowork engine.
 package agent
 
 import (
@@ -87,6 +88,10 @@ func (p *Planner) CreatePlan(ctx context.Context, task string) (*Plan, error) {
 
 // RefinePlan sends a correction prompt when a step fails.
 func (p *Planner) RefinePlan(ctx context.Context, plan *Plan, failedStep Step, errorMsg string) (*Plan, error) {
+	if p.client == nil {
+		return plan, nil
+	}
+
 	prompt := fmt.Sprintf(
 		"Step %d failed: %q\nError: %s\n\nRevise the remaining plan from step %d onwards. Respond with updated JSON.",
 		failedStep.ID, failedStep.Description, errorMsg, failedStep.ID,

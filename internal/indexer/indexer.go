@@ -1,3 +1,5 @@
+// Package indexer walks a project directory and populates the SQLite
+// symbol index used for context-aware code search during agent execution.
 package indexer
 
 import (

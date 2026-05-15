@@ -1,3 +1,6 @@
+// Package agent implements the autonomous cowork engine.
+// This file contains the Verifier, which uses the LLM to assess step results,
+// with a fast heuristic fallback when the LLM is unavailable or disabled.
 package agent
 
 import (

@@ -1,3 +1,5 @@
+// Package styles defines the colour palette, Lipgloss base styles, phase
+// badges, and all reusable UI primitives shared across TUI views.
 package styles
 
 import "github.com/charmbracelet/lipgloss"

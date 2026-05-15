@@ -1,3 +1,5 @@
+// Package llm — this file implements a sliding-window ContextManager
+// that keeps token usage within the limits of small mobile LLMs.
 package llm
 
 import (

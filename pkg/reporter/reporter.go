@@ -1,3 +1,5 @@
+// Package reporter formats the final wake-up report produced after a
+// cowork session, both as a compact one-liner and as full Markdown.
 package reporter
 
 import (
