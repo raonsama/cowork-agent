@@ -21,7 +21,7 @@ GOARCH    ?= $(shell go env GOARCH)
 # Installation paths
 PREFIX    ?= $(HOME)/.local
 BINDIR    := $(PREFIX)/bin
-LUADIR    := $(HOME)/.config/nvim/lua/plugins
+LUADIR    := $(HOME)/.config/nvim/lua
 
 ## ─────────────────────────────────────────────────────────────────────────────
 ## Build targets
@@ -108,8 +108,9 @@ install: build
 	@cp $(BINPATH)/$(BINARY) $(BINDIR)/$(BINARY)
 	@chmod +x $(BINDIR)/$(BINARY)
 	@echo "  →  Installing LazyVim plugin to $(LUADIR)"
-	@mkdir -p $(LUADIR)
-	@cp plugin/lazyvim/cowork-agent.lua $(LUADIR)/cowork-agent.lua
+	@mkdir -p $(LUADIR)/cowork-agent
+	@cp ./plugin/lazyvim/cowork-agent-module.lua $(LUADIR)/cowork-agent/cowork.lua
+	@cp ./plugin/lazyvim/cowork-agent-plugin.lua $(LUADIR)/plugins/cowork.lua
 	@echo "  ✅  Installed. Add $(BINDIR) to PATH if needed."
 
 uninstall:

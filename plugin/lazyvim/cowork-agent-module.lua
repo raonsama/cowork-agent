@@ -1,6 +1,6 @@
 -- cowork-agent.lua
 -- LazyVim plugin bridge for CoworkAgent
--- Place in ~/.config/nvim/lua/plugins/cowork-agent.lua
+-- Place in ~/.config/nvim/lua/cowork-agent/cowork-agent.lua
 -- or load via your lazy.nvim spec.
 
 local M = {}
@@ -9,7 +9,7 @@ local M = {}
 
 M.config = {
   -- Path to the compiled cowork binary
-  bin = vim.fn.expand("~/.local/bin/cowork"),
+  bin = vim.fn.expand("cowork"),
   -- Ollama model override (empty = use config default)
   model = "",
   -- Float window dimensions (fraction of editor size)
@@ -18,9 +18,9 @@ M.config = {
   -- Sidebar width (columns) when using sidebar mode
   sidebar_width = 60,
   -- Default window mode: "float" | "sidebar" | "tab"
-  window_mode = "float",
+  window_mode = "tab",
   -- Keymap prefix
-  prefix = "<leader>cw",
+  prefix = "<leader>a",
 }
 
 -- ── State ─────────────────────────────────────────────────────────────────────
@@ -256,17 +256,17 @@ function M.setup_keymaps()
   local opts = { noremap = true, silent = true }
 
   -- Toggle float
-  vim.keymap.set("n", p .. "t", M.toggle,        vim.tbl_extend("force", opts, { desc = "CoworkAgent: Toggle" }))
+  vim.keymap.set("n", p .. "i", M.toggle,        vim.tbl_extend("force", opts, { desc = "CoworkAgent: Toggle" }))
   -- Open in specific modes
-  vim.keymap.set("n", p .. "o", function() M.open("float")   end, vim.tbl_extend("force", opts, { desc = "CoworkAgent: Open float" }))
+  vim.keymap.set("n", p .. "f", function() M.open("float")   end, vim.tbl_extend("force", opts, { desc = "CoworkAgent: Open float" }))
   vim.keymap.set("n", p .. "s", function() M.open("sidebar") end, vim.tbl_extend("force", opts, { desc = "CoworkAgent: Open sidebar" }))
-  vim.keymap.set("n", p .. "T", function() M.open("tab")     end, vim.tbl_extend("force", opts, { desc = "CoworkAgent: Open tab" }))
+  vim.keymap.set("n", p .. "t", function() M.open("tab")     end, vim.tbl_extend("force", opts, { desc = "CoworkAgent: Open tab" }))
   -- Send task
   vim.keymap.set("n", p .. "p", M.prompt_task,   vim.tbl_extend("force", opts, { desc = "CoworkAgent: Prompt task" }))
   -- Send visual selection as context
   vim.keymap.set("v", p .. "c", M.send_selection, vim.tbl_extend("force", opts, { desc = "CoworkAgent: Send selection" }))
   -- Index project
-  vim.keymap.set("n", p .. "i", M.index,          vim.tbl_extend("force", opts, { desc = "CoworkAgent: Index project" }))
+  vim.keymap.set("n", p .. "I", M.index,          vim.tbl_extend("force", opts, { desc = "CoworkAgent: Index project" }))
 end
 
 -- ── Autocmds ──────────────────────────────────────────────────────────────────
