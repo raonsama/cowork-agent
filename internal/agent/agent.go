@@ -91,6 +91,13 @@ func (a *Agent) Close() {
 	a.thermal.Stop()
 }
 
+func (a *Agent) PrepareRun() <-chan Event {
+	a.eventCh = make(chan Event, 64)
+	a.planner.ctx.Reset()
+	a.verifier.ctx.Reset()
+	return a.eventCh
+}
+
 // Run executes the full cowork loop for a given task description.
 // It is designed to run in its own goroutine; the TUI consumes Events().
 func (a *Agent) Run(ctx context.Context, task string) {
@@ -108,6 +115,11 @@ func (a *Agent) Run(ctx context.Context, task string) {
 	// ── Shadow workspace ─────────────────────────────────────
 	ws := shadow.NewWorkspace(a.cfg.ProjectRoot, a.cfg.BranchPrefix)
 	if err := ws.Begin(task); err != nil {
+		defer func() {
+			if ctx.Err() != nil { // dibatalkan user
+				_ = ws.Abort()
+			}
+		}()
 		// Non-fatal: continue without shadow workspace (e.g., no git repo)
 		a.emit(Event{Phase: PhasePlan, Message: "⚠️  Shadow workspace unavailable — working on current branch"})
 	} else {

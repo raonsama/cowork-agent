@@ -13,6 +13,7 @@ type Workspace struct {
 	branchPrefix string
 	branchName   string
 	baseBranch   string
+	active       bool
 }
 
 // NewWorkspace creates a Workspace for the given project root.
@@ -38,6 +39,7 @@ func (w *Workspace) Begin(taskSlug string) error {
 	if err := w.git("checkout", "-b", w.branchName); err != nil {
 		return fmt.Errorf("create branch %q: %w", w.branchName, err)
 	}
+	w.active = true
 	return nil
 }
 
@@ -58,6 +60,9 @@ func (w *Workspace) StageAll() error {
 
 // Commit creates a commit with the given message.
 func (w *Workspace) Commit(msg string) error {
+	if !w.active {
+		return nil
+	}
 	out, err := w.gitOutput("status", "--porcelain")
 	if err != nil {
 		return err

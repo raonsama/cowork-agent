@@ -67,6 +67,10 @@ type Model struct {
 	// Flags
 	showLogs bool
 	ready    bool
+
+	// double esc tracker
+	lastEscAt time.Time
+	escWindow time.Duration
 }
 
 func newModel(ag *agent.Agent, initialTask string) Model {
@@ -75,12 +79,13 @@ func newModel(ag *agent.Agent, initialTask string) Model {
 	sp.Style = styles.SpinnerStyle
 
 	m := Model{
-		mode:     ModeChat,
-		ag:       ag,
-		spinner:  sp,
-		phase:    "idle",
-		showLogs: true,
-		chat:     views.NewChatView(80, 24),
+		mode:      ModeChat,
+		ag:        ag,
+		spinner:   sp,
+		phase:     "idle",
+		showLogs:  true,
+		chat:      views.NewChatView(80, 24),
+		escWindow: 500 * time.Millisecond,
 	}
 
 	if initialTask != "" {
@@ -115,6 +120,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
+		case "esc":
+			now := time.Now()
+			if now.Sub(m.lastEscAt) <= m.escWindow {
+				if m.cancelFn != nil {
+					m.cancelFn()
+					m.cancelFn = nil
+				}
+				m.phase = "idle"
+				m.mode = ModeChat
+				m.logs.Add(views.LevelWarn, "idle", "Response stopped (double ESC)", "")
+				m.chat.AppendMessage("system", "Stopped.")
+				m.lastEscAt = time.Time{}
+			} else {
+				firstEsc := m.lastEscAt.IsZero() // hanya hint jika ini benar-benar pertama
+				m.lastEscAt = now
+				if m.mode == ModeCowork && firstEsc {
+					m.chat.AppendMessage("system", "Press ESC again to stop…")
+				}
+			}
+			return m, nil
+
 		case "ctrl+c", "q":
 			if m.cancelFn != nil {
 				m.cancelFn()
@@ -181,7 +207,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ev.Branch != "" {
 			m.branch = ev.Branch
 		}
-		cmds = append(cmds, waitForAgentEvent(m.ag.Events()))
+		if ev.Phase != agent.PhaseDone && ev.Phase != agent.PhaseError {
+			cmds = append(cmds, waitForAgentEvent(m.ag.Events()))
+		}
 
 	case thermalMsg:
 		m.thermalStatus = thermal.Status(msg)
@@ -308,12 +336,17 @@ func (m *Model) startCowork(task string) tea.Cmd {
 	m.stepTotal = 0
 	m.stepCurrent = 0
 
+	if m.cancelFn != nil {
+		m.cancelFn() // terminasi run sebelumnya
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelFn = cancel
 
+	ch := m.ag.PrepareRun()
 	go m.ag.Run(ctx, task)
 
-	return waitForAgentEvent(m.ag.Events())
+	return waitForAgentEvent(ch)
 }
 
 func waitForAgentEvent(ch <-chan agent.Event) tea.Cmd {

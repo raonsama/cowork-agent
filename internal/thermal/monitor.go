@@ -31,6 +31,8 @@ type Monitor struct {
 	status   Status
 	mu       sync.RWMutex
 	statusCh chan Status
+	started  atomic.Bool
+	stopOnce sync.Once
 	stopCh   chan struct{}
 }
 
@@ -47,12 +49,15 @@ func NewMonitor(tempThreshold, cpuThreshold float64) *Monitor {
 
 // Start begins background monitoring. Call Stop() to halt.
 func (m *Monitor) Start() {
+	if m.started.Swap(true) {
+		return
+	}
 	go m.loop()
 }
 
 // Stop halts the monitor.
 func (m *Monitor) Stop() {
-	close(m.stopCh)
+	m.stopOnce.Do(func() { close(m.stopCh) })
 }
 
 // StatusCh returns the channel on which Status updates are broadcast.
