@@ -108,20 +108,25 @@ func (a *Agent) Run(ctx context.Context, task string) {
 	a.thermal.Start()
 	startTime := time.Now()
 
-	// ── Ping Ollama ──────────────────────────────────────────
+	// ── Ping Ollama ───────────────────────────────────────
 	if err := a.client.Ping(ctx); err != nil {
 		a.emit(Event{Phase: PhaseError, Err: fmt.Errorf("ollama unreachable: %w", err)})
 		return
 	}
 
-	// ── Shadow workspace ─────────────────────────────────────
+	// ── Intent detection ──────────────────────────────────
+	// Conversational inputs (greetings, questions, short chitchat) are
+	// answered directly via LLM chat — no tool pipeline, no shadow branch.
+	if isConversational(task) {
+		a.runChat(ctx, task)
+		return
+	}
+
+	// ── Shadow workspace ──────────────────────────────────
 	ws := shadow.NewWorkspace(a.cfg.ProjectRoot, a.cfg.BranchPrefix)
 	if err := ws.Begin(task); err != nil {
-		// Non-fatal: work on the current branch.
 		a.emit(Event{Phase: PhasePlan, Message: "⚠️  Shadow workspace unavailable — working on current branch"})
 	} else {
-		// BUG FIX: defer must be in the success branch so it runs when
-		// Begin succeeds and the context is later cancelled by the user.
 		defer func() {
 			if ctx.Err() != nil {
 				_ = ws.Abort()
@@ -130,8 +135,9 @@ func (a *Agent) Run(ctx context.Context, task string) {
 		a.emit(Event{Phase: PhasePlan, Branch: ws.BranchName(), Message: "Shadow branch: " + ws.BranchName()})
 	}
 
-	// ── Plan ─────────────────────────────────────────────────
+	// ── Plan ──────────────────────────────────────────────
 	a.emit(Event{Phase: PhasePlan, Message: "Decomposing task into steps…"})
+
 	var plan *Plan
 	if a.cfg.PlannerEnabled {
 		var err error
@@ -141,7 +147,6 @@ func (a *Agent) Run(ctx context.Context, task string) {
 			return
 		}
 	} else {
-		// No-op planner: single shell step.
 		plan = &Plan{
 			Task:    task,
 			Steps:   []Step{{ID: 1, Description: task, ToolHint: "run_shell"}},
@@ -150,7 +155,7 @@ func (a *Agent) Run(ctx context.Context, task string) {
 	}
 	a.emit(Event{Phase: PhasePlan, Message: fmt.Sprintf("Plan ready: %d steps — %s", len(plan.Steps), plan.Summary)})
 
-	// ── Execution loop ───────────────────────────────────────
+	// ── Execution loop ────────────────────────────────────
 	log := []reporter.StepLog{}
 	maxRetries := 2
 
@@ -160,32 +165,32 @@ func (a *Agent) Run(ctx context.Context, task string) {
 			continue
 		}
 
-		// Thermal throttle check
 		if a.thermal.IsThrottled() {
 			status := a.thermal.Current()
 			a.emit(Event{Phase: PhaseThrottle, Message: status.ThrottleMsg})
 			a.thermal.WaitIfThrottled(ctx.Done())
 		}
 
-		// ── Context-aware code search ──────────────────────
-		a.emit(Event{
-			Phase: PhaseSearch, StepID: step.ID, StepDesc: step.Description,
-			Message: "Searching relevant code context…",
-		})
-		snippets := a.searchContext(step.Description)
+		// Context search hanya jalan jika planner aktif — tanpa planner
+		// tidak ada cukup sinyal untuk query FTS yang bermakna.
 		contextBlock := ""
-		if len(snippets) > 0 {
-			cm := llm.NewContextManager(a.cfg.ContextWindow, "")
-			contextBlock = cm.InjectContext(snippets)
+		if a.cfg.PlannerEnabled {
+			a.emit(Event{
+				Phase: PhaseSearch, StepID: step.ID, StepDesc: step.Description,
+				Message: "Searching relevant code context…",
+			})
+			snippets := a.searchContext(step.Description)
+			if len(snippets) > 0 {
+				cm := llm.NewContextManager(a.cfg.ContextWindow, "")
+				contextBlock = cm.InjectContext(snippets)
+			}
 		}
 
-		// ── Execute step (with retries) ────────────────────
 		var toolResult mcp.ToolResult
 		var verdict Verdict
 		retries := 0
 
 		for retries <= maxRetries {
-			// Ask LLM what tool call to make for this step
 			toolCall, err := a.resolveToolCall(ctx, plan, step, contextBlock)
 			if err != nil {
 				a.emit(Event{Phase: PhaseError, StepID: step.ID, Err: err})
@@ -202,7 +207,7 @@ func (a *Agent) Run(ctx context.Context, task string) {
 
 			toolResult = a.mcpSrv.Dispatch(ctx, *toolCall)
 
-			// Verify
+			// ── Verify (toggle-aware) ─────────────────────
 			a.emit(Event{Phase: PhaseVerify, StepID: step.ID, Message: "Verifying result…"})
 			if a.cfg.VerifierEnabled {
 				verdict, _ = a.verifier.Verify(ctx, *step, toolResult.Output+toolResult.Error)
@@ -221,14 +226,15 @@ func (a *Agent) Run(ctx context.Context, task string) {
 				Message: fmt.Sprintf("⚠️  Retry %d/%d — %s", retries, maxRetries, verdict.Reason),
 			})
 
-			// Refine plan on repeated failure
-			if retries == maxRetries {
+			if a.cfg.PlannerEnabled && retries == maxRetries {
 				plan, _ = a.planner.RefinePlan(ctx, plan, *step, verdict.Reason)
 			}
 
 			a.emit(Event{
-				Phase: PhaseExecute, StepID: step.ID,
-				ToolName: string(toolCall.Name), ToolOutput: toolResult.Output,
+				Phase:      PhaseExecute,
+				StepID:     step.ID,
+				ToolName:   string(toolCall.Name),
+				ToolOutput: toolResult.Output,
 			})
 		}
 
@@ -252,13 +258,12 @@ func (a *Agent) Run(ctx context.Context, task string) {
 		})
 	}
 
-	// ── Commit to shadow branch ───────────────────────────
+	// ── Commit ────────────────────────────────────────────
 	a.emit(Event{Phase: PhaseCommit, Message: "Committing changes to shadow branch…"})
 	diff, _ := ws.Diff()
 	stat, _ := ws.Stat()
 	_ = ws.Commit(plan.Summary)
 
-	// ── Wake-up report ────────────────────────────────────
 	elapsed := time.Since(startTime)
 	rpt := &reporter.Report{
 		Task:        task,
@@ -273,9 +278,85 @@ func (a *Agent) Run(ctx context.Context, task string) {
 
 	a.emit(Event{Phase: PhaseDone, Final: rpt, Message: "Tugas selesai. Mimpimu sudah aman di kode ini, silakan lanjut rebahan. 🌙"})
 
-	// Termux notification
 	_ = a.termux.NotifyTaskComplete(task, rpt.OneLiner())
 	a.termux.Vibrate(300)
+}
+
+// runChat handles conversational inputs that do not require tool execution.
+// It streams the LLM response token-by-token as a single assistant message.
+func (a *Agent) runChat(ctx context.Context, input string) {
+	system := `You are CoworkAgent, a senior software engineer assistant.
+Answer the user's question or message naturally and concisely.
+Do not use tool calls. Do not produce JSON plans.`
+
+	cm := llm.NewContextManager(a.cfg.ContextWindow, system)
+	cm.AddMessage("user", input)
+
+	tokenCh, errCh := a.client.Chat(ctx, cm.Build(), llm.Options{Temperature: 0.7})
+
+	var full strings.Builder
+	for token := range tokenCh {
+		full.WriteString(token)
+		a.emit(Event{Phase: PhaseIdle, Message: token})
+	}
+
+	if err := <-errCh; err != nil && ctx.Err() == nil {
+		a.emit(Event{Phase: PhaseError, Err: err})
+		return
+	}
+
+	a.emit(Event{Phase: PhaseDone, Message: full.String()})
+}
+
+// isConversational returns true for inputs that are clearly not coding tasks:
+// short messages, greetings, questions without imperative action words, etc.
+func isConversational(input string) bool {
+	t := strings.TrimSpace(strings.ToLower(input))
+
+	// Very short inputs are almost never tasks.
+	if len([]rune(t)) < 20 {
+		return true
+	}
+
+	// Starts with a question word → conversational.
+	questionPrefixes := []string{
+		"apa ", "siapa ", "kapan ", "kenapa ", "mengapa ", "bagaimana ",
+		"what ", "who ", "when ", "why ", "how ", "is ", "are ", "can ",
+		"could ", "would ", "should ", "do you ", "did you ",
+	}
+	for _, p := range questionPrefixes {
+		if strings.HasPrefix(t, p) {
+			return true
+		}
+	}
+
+	// Greetings / chitchat keywords.
+	greetings := []string{
+		"hai", "hi", "hello", "halo", "hey", "hei",
+		"selamat", "pagi", "siang", "sore", "malam",
+		"thanks", "thank you", "terima kasih", "makasih",
+		"oke", "ok", "oke deh", "mantap", "keren", "good",
+	}
+	for _, g := range greetings {
+		if t == g || strings.HasPrefix(t, g+" ") || strings.HasSuffix(t, " "+g) {
+			return true
+		}
+	}
+
+	// Contains explicit task verbs → not conversational.
+	taskVerbs := []string{
+		"buat ", "create ", "add ", "fix ", "refactor ", "implement ",
+		"write ", "update ", "delete ", "remove ", "migrate ", "deploy ",
+		"run ", "build ", "test ", "generate ", "parse ", "tambah ",
+		"perbaiki ", "ubah ", "hapus ", "jalankan ",
+	}
+	for _, v := range taskVerbs {
+		if strings.Contains(t, v) {
+			return false
+		}
+	}
+
+	return false
 }
 
 // resolveToolCall asks the LLM to produce the correct MCP tool call for a step.

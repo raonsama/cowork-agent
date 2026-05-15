@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -46,6 +47,97 @@ type Client struct {
 	baseURL    string
 	model      string
 	httpClient *http.Client
+}
+
+// stripThink removes <think>…</think> blocks that reasoning models
+// (e.g. qwen3, deepseek-r1) emit before their actual response.
+// It works on a per-chunk basis using a small state machine so it is
+// safe to call on every streaming token without buffering the full reply.
+type thinkStripper struct {
+	buf     strings.Builder
+	inside  bool   // currently inside a <think> block
+	pending string // partial tag accumulator
+}
+
+func newThinkStripper() *thinkStripper { return &thinkStripper{} }
+
+const (
+	tagOpen  = "<think>"
+	tagClose = "</think>"
+)
+
+// Feed accepts one raw token and returns the cleaned output (may be empty
+// if the token is part of a think block).
+func (s *thinkStripper) Feed(token string) string {
+	s.pending += token
+	s.buf.Reset()
+
+	for len(s.pending) > 0 {
+		if s.inside {
+			// Looking for </think>
+			idx := strings.Index(s.pending, tagClose)
+			if idx >= 0 {
+				// Found closing tag — discard everything up to and including it.
+				s.pending = s.pending[idx+len(tagClose):]
+				s.inside = false
+				// Skip optional single newline directly after </think>.
+				s.pending = strings.TrimPrefix(s.pending, "\n")
+			} else if couldBeSuffix(s.pending, tagClose) {
+				// Partial closing tag at end — wait for more tokens.
+				break
+			} else {
+				// No closing tag anywhere — discard the whole buffer.
+				s.pending = ""
+			}
+		} else {
+			// Looking for <think>
+			idx := strings.Index(s.pending, tagOpen)
+			if idx >= 0 {
+				// Emit everything before the opening tag.
+				s.buf.WriteString(s.pending[:idx])
+				s.pending = s.pending[idx+len(tagOpen):]
+				s.inside = true
+			} else if couldBeSuffix(s.pending, tagOpen) {
+				// Partial opening tag at end — emit safe prefix, hold the rest.
+				safe := len(s.pending) - (len(tagOpen) - 1)
+				if safe > 0 {
+					s.buf.WriteString(s.pending[:safe])
+					s.pending = s.pending[safe:]
+				}
+				break
+			} else {
+				// No tag — emit everything.
+				s.buf.WriteString(s.pending)
+				s.pending = ""
+			}
+		}
+	}
+
+	return s.buf.String()
+}
+
+// Flush emits any remaining buffered content (call after stream ends).
+func (s *thinkStripper) Flush() string {
+	if s.inside {
+		// Unclosed <think> — discard.
+		s.pending = ""
+		s.inside = false
+		return ""
+	}
+	out := s.pending
+	s.pending = ""
+	return out
+}
+
+// couldBeSuffix returns true if s ends with a non-empty prefix of tag,
+// meaning we might be in the middle of receiving that tag.
+func couldBeSuffix(s, tag string) bool {
+	for l := len(tag) - 1; l > 0; l-- {
+		if strings.HasSuffix(s, tag[:l]) {
+			return true
+		}
+	}
+	return false
 }
 
 // NewClient constructs a new Ollama client.
@@ -102,7 +194,9 @@ func (c *Client) Chat(ctx context.Context, messages []Message, opts Options) (<-
 			return
 		}
 
+		stripper := newThinkStripper()
 		scanner := bufio.NewScanner(resp.Body)
+
 		for scanner.Scan() {
 			select {
 			case <-ctx.Done():
@@ -122,12 +216,23 @@ func (c *Client) Chat(ctx context.Context, messages []Message, opts Options) (<-
 			}
 
 			if chunk.Message.Content != "" {
-				tokenCh <- chunk.Message.Content
+				if cleaned := stripper.Feed(chunk.Message.Content); cleaned != "" {
+					tokenCh <- cleaned
+				}
 			}
 
 			if chunk.Done {
+				// Flush any held partial content.
+				if tail := stripper.Flush(); tail != "" {
+					tokenCh <- tail
+				}
 				return
 			}
+		}
+
+		// Stream ended without Done=true — flush anyway.
+		if tail := stripper.Flush(); tail != "" {
+			tokenCh <- tail
 		}
 
 		if err := scanner.Err(); err != nil {

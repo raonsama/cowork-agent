@@ -144,6 +144,20 @@ var (
 
 	TokenUsage = lipgloss.NewStyle().
 			Foreground(ColorMuted)
+
+	// ToggleOn renders a feature-toggle label as an active green pill.
+	ToggleOn = lipgloss.NewStyle().
+			Foreground(ColorBg).
+			Background(ColorGreen).
+			Bold(true).
+			Padding(0, 1)
+
+	// ToggleOff renders a feature-toggle label as a dimmed struck-through pill.
+	ToggleOff = lipgloss.NewStyle().
+			Foreground(ColorMuted).
+			Background(ColorSurface).
+			Strikethrough(true).
+			Padding(0, 1)
 )
 
 // ── Phase badges ─────────────────────────────────────────────────────────────

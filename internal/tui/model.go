@@ -184,32 +184,52 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ev.StepID > 0 {
 			m.stepCurrent = ev.StepID
 		}
+
+		// ── Final report ──────────────────────────────────
 		if ev.Final != nil {
 			m.finalReport = ev.Final
 			m.mode = ModeReport
 			m.phase = "done"
 			m.chat.AppendMessage("assistant", ev.Final.Markdown())
 		}
+
+		// ── Error ─────────────────────────────────────────
 		if ev.Err != nil {
 			m.err = ev.Err
 			m.phase = "error"
 			m.logs.Add(views.LevelError, "error", ev.Err.Error(), "")
 			m.chat.AppendMessage("system", "❌ "+ev.Err.Error())
 		}
-		if ev.Message != "" {
+
+		// ── Chat streaming (conversational mode) ──────────
+		// PhaseIdle + Message with no ToolName = streamed chat token.
+		if ev.Phase == agent.PhaseIdle && ev.Message != "" && ev.ToolName == "" {
+			m.chat.StreamToken(ev.Message)
+		}
+
+		// ── Done: finalize streamed chat bubble ───────────
+		if ev.Phase == agent.PhaseDone && ev.Final == nil && ev.Message != "" {
+			m.chat.FinalizeStream()
+		}
+
+		// ── Log panel entries (non-streaming) ─────────────
+		if ev.Message != "" && !(ev.Phase == agent.PhaseIdle && ev.ToolName == "") {
 			level := views.LevelInfo
-			if ev.Phase == "done" {
+			switch {
+			case ev.Phase == agent.PhaseDone:
 				level = views.LevelSuccess
-			} else if ev.Phase == "error" {
+			case ev.Phase == agent.PhaseError:
 				level = views.LevelError
-			} else if ev.ToolName != "" {
+			case ev.ToolName != "":
 				level = views.LevelTool
 			}
 			m.logs.Add(level, string(ev.Phase), ev.Message, ev.ToolOutput)
 		}
+
 		if ev.Branch != "" {
 			m.branch = ev.Branch
 		}
+
 		if ev.Phase != agent.PhaseDone && ev.Phase != agent.PhaseError {
 			cmds = append(cmds, waitForAgentEvent(m.ag.Events()))
 		}
@@ -235,15 +255,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Update status bar
 	m.status = views.StatusBar{
-		Width:       m.width,
-		Phase:       m.phase,
-		Model:       m.ag.Cfg().DefaultModel,
-		Branch:      m.branch,
-		TempC:       m.thermalStatus.TempCelsius,
-		CPUPercent:  m.thermalStatus.CPUPercent,
-		Throttled:   m.thermalStatus.Throttled,
-		StepCurrent: m.stepCurrent,
-		StepTotal:   m.stepTotal,
+		Width:           m.width,
+		Phase:           m.phase,
+		Model:           m.ag.Cfg().DefaultModel,
+		Branch:          m.branch,
+		TempC:           m.thermalStatus.TempCelsius,
+		CPUPercent:      m.thermalStatus.CPUPercent,
+		Throttled:       m.thermalStatus.Throttled,
+		StepCurrent:     m.stepCurrent,
+		StepTotal:       m.stepTotal,
+		PlannerEnabled:  m.ag.Cfg().PlannerEnabled,
+		VerifierEnabled: m.ag.Cfg().VerifierEnabled,
 	}
 
 	return m, tea.Batch(cmds...)

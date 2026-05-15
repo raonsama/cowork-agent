@@ -23,11 +23,14 @@ type StatusBar struct {
 	TokensMax   int
 	StepCurrent int
 	StepTotal   int
+	// Feature toggle indicators
+	PlannerEnabled  bool
+	VerifierEnabled bool
 }
 
 // Render produces the status bar string for the current terminal width.
 func (s *StatusBar) Render() string {
-	// Left: phase badge + step counter
+	// ── Left: phase badge + step counter ─────────────────
 	icon := styles.PhaseIcon[s.Phase]
 	if icon == "" {
 		icon = "·"
@@ -45,20 +48,26 @@ func (s *StatusBar) Render() string {
 
 	left := phaseLabel + stepInfo
 
-	// Center: model + branch
+	// ── Center: model + branch + feature toggles ─────────
 	model := styles.Subtle.Render(s.Model)
+
 	branch := ""
 	if s.Branch != "" {
 		branch = styles.Muted.Render("  " + branchIcon + " " + s.Branch)
 	}
-	center := model + branch
 
-	// Right: thermal + tokens
+	planner := renderToggle("PLN", s.PlannerEnabled)
+	verifier := renderToggle("VRF", s.VerifierEnabled)
+	toggles := "  " + planner + " " + verifier
+
+	center := model + branch + toggles
+
+	// ── Right: thermal + tokens ───────────────────────────
 	thermal := ""
 	if s.Throttled {
 		thermal = styles.StatusThrottle.Width(18).Render(fmt.Sprintf("🌡 %.0f°C THROTTLED", s.TempC))
 	} else if s.TempC > 0 {
-		thermal = styles.Muted.Width(18).Render(fmt.Sprintf("%.0f°C  CPU %.0f%%", s.TempC, s.CPUPercent))
+		thermal = styles.Muted.Render(fmt.Sprintf("%.0f°C  CPU %.0f%%", s.TempC, s.CPUPercent))
 	}
 
 	tokens := ""
@@ -72,7 +81,7 @@ func (s *StatusBar) Render() string {
 	}
 	right := thermal + tokens
 
-	// Assemble with padding
+	// ── Assemble with padding ─────────────────────────────
 	leftW := lipgloss.Width(left)
 	centerW := lipgloss.Width(center)
 	rightW := lipgloss.Width(right)
@@ -94,6 +103,17 @@ func (s *StatusBar) Render() string {
 		right
 
 	return styles.StatusBar.Width(s.Width).Render(row)
+}
+
+// renderToggle returns a coloured pill badge for a feature toggle.
+//
+//	enabled  → "PLN" in green background
+//	disabled → "PLN" in muted/strikethrough style
+func renderToggle(label string, enabled bool) string {
+	if enabled {
+		return styles.ToggleOn.Render(label)
+	}
+	return styles.ToggleOff.Render(label)
 }
 
 const branchIcon = ""
