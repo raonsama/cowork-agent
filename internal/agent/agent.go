@@ -138,21 +138,12 @@ func (a *Agent) Run(ctx context.Context, task string) {
 	// ── Plan ──────────────────────────────────────────────
 	a.emit(Event{Phase: PhasePlan, Message: "Decomposing task into steps…"})
 
-	var plan *Plan
-	if a.cfg.PlannerEnabled {
-		var err error
-		plan, err = a.planner.CreatePlan(ctx, task)
-		if err != nil {
-			a.emit(Event{Phase: PhaseError, Err: err})
-			return
-		}
-	} else {
-		plan = &Plan{
-			Task:    task,
-			Steps:   []Step{{ID: 1, Description: task, ToolHint: "run_shell"}},
-			Summary: task,
-		}
+	plan, err := a.planner.CreatePlan(ctx, task)
+	if err != nil {
+		a.emit(Event{Phase: PhaseError, Err: err})
+		return
 	}
+
 	a.emit(Event{Phase: PhasePlan, Message: fmt.Sprintf("Plan ready: %d steps — %s", len(plan.Steps), plan.Summary)})
 
 	// ── Execution loop ────────────────────────────────────
@@ -174,16 +165,14 @@ func (a *Agent) Run(ctx context.Context, task string) {
 		// Context search hanya jalan jika planner aktif — tanpa planner
 		// tidak ada cukup sinyal untuk query FTS yang bermakna.
 		contextBlock := ""
-		if a.cfg.PlannerEnabled {
-			a.emit(Event{
-				Phase: PhaseSearch, StepID: step.ID, StepDesc: step.Description,
-				Message: "Searching relevant code context…",
-			})
-			snippets := a.searchContext(step.Description)
-			if len(snippets) > 0 {
-				cm := llm.NewContextManager(a.cfg.ContextWindow, "")
-				contextBlock = cm.InjectContext(snippets)
-			}
+		a.emit(Event{
+			Phase: PhaseSearch, StepID: step.ID, StepDesc: step.Description,
+			Message: "Searching relevant code context…",
+		})
+		snippets := a.searchContext(step.Description)
+		if len(snippets) > 0 {
+			cm := llm.NewContextManager(a.cfg.ContextWindow, "")
+			contextBlock = cm.InjectContext(snippets)
 		}
 
 		var toolResult mcp.ToolResult
@@ -209,11 +198,7 @@ func (a *Agent) Run(ctx context.Context, task string) {
 
 			// ── Verify (toggle-aware) ─────────────────────
 			a.emit(Event{Phase: PhaseVerify, StepID: step.ID, Message: "Verifying result…"})
-			if a.cfg.VerifierEnabled {
-				verdict, _ = a.verifier.Verify(ctx, *step, toolResult.Output+toolResult.Error)
-			} else {
-				verdict = heuristicVerdict(toolResult.Output + toolResult.Error)
-			}
+			verdict, _ = a.verifier.Verify(ctx, *step, toolResult.Output+toolResult.Error)
 
 			if verdict.Passed || retries >= maxRetries {
 				break
@@ -226,7 +211,7 @@ func (a *Agent) Run(ctx context.Context, task string) {
 				Message: fmt.Sprintf("⚠️  Retry %d/%d — %s", retries, maxRetries, verdict.Reason),
 			})
 
-			if a.cfg.PlannerEnabled && retries == maxRetries {
+			if retries == maxRetries {
 				plan, _ = a.planner.RefinePlan(ctx, plan, *step, verdict.Reason)
 			}
 

@@ -75,12 +75,6 @@ func (cv *ChatView) FinalizeStream() {
 	cv.refreshViewport()
 }
 
-// refreshViewport re-renders all messages and scrolls to the bottom.
-func (cv *ChatView) refreshViewport() {
-	cv.Viewport.SetContent(cv.renderMessages())
-	cv.Viewport.GotoBottom()
-}
-
 // renderContent splits content on code fences, adding line numbers to code blocks.
 func renderContent(content string, maxWidth int) string {
 	if maxWidth < 4 {
@@ -112,41 +106,64 @@ func renderContent(content string, maxWidth int) string {
 
 // renderCodeBlock formats a code snippet with gutter line numbers.
 func renderCodeBlock(lang, code string, maxWidth int) string {
+	if maxWidth < 10 {
+		maxWidth = 10
+	}
 	lines := strings.Split(code, "\n")
-	numW := len(fmt.Sprintf("%d", len(lines))) // gutter width
-	barW := maxWidth - numW - 3                // content area: " N │ code"
+	// Remove trailing empty line that Split often produces.
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
 
-	var sb strings.Builder
+	numW := len(fmt.Sprintf("%d", len(lines))) // digits needed for largest line number
+	gutterW := numW + 3                        // " N │ "
+	codeAreaW := max(maxWidth-gutterW, 1)
 
-	// Header bar  ──  lang  ────────────
 	langLabel := lang
 	if langLabel == "" {
 		langLabel = "text"
 	}
-	headerPad := max(maxWidth-len(langLabel)-2, 0)
-	sb.WriteString(
-		styles.Muted.Render(" "+langLabel+strings.Repeat("─", headerPad)) + "\n",
-	)
+
+	var sb strings.Builder
+
+	// Header: "  go ─────────────────────"
+	headerFill := strings.Repeat("─", max(maxWidth-len(langLabel)-2, 0))
+	sb.WriteString(styles.Muted.Render(" "+langLabel+headerFill) + "\n")
 
 	for i, line := range lines {
-		// Truncate long lines to avoid viewport overflow
-		if len(line) > barW && barW > 3 {
-			line = line[:barW-1] + "…"
+		// Truncate long lines to avoid viewport overflow.
+		runes := []rune(line)
+		if len(runes) > codeAreaW && codeAreaW > 3 {
+			line = string(runes[:codeAreaW-1]) + "…"
 		}
-		gutter := styles.Muted.Render(fmt.Sprintf("%*d │ ", numW, i+1))
-		code := styles.ReportCode.Render(line)
-		sb.WriteString(gutter + code + "\n")
+		gutter := styles.CodeGutter.Render(fmt.Sprintf("%*d │ ", numW, i+1))
+		codePart := styles.CodeLine.Render(line)
+		sb.WriteString(gutter + codePart + "\n")
 	}
 
-	// Footer separator
+	// Footer separator.
 	sb.WriteString(styles.Muted.Render(strings.Repeat("─", maxWidth)) + "\n")
 	return sb.String()
 }
 
-// renderMessages re-renders all chat messages into a single string for the viewport.
+// Render draws only the conversation viewport.
+// Input is owned exclusively by model.go → renderInput().
+func (cv *ChatView) Render() string {
+	cv.Viewport.SetContent(cv.renderMessages())
+	return cv.Viewport.View()
+}
+
+// refreshViewport re-renders all messages and scrolls to the bottom.
+// Called on message append/stream so the viewport tracks new content.
+func (cv *ChatView) refreshViewport() {
+	cv.Viewport.SetContent(cv.renderMessages())
+	cv.Viewport.GotoBottom()
+}
+
+// renderMessages re-renders all chat messages into a single string.
 func (cv *ChatView) renderMessages() string {
 	var sb strings.Builder
-	// Use viewport width for accurate wrapping; subtract bubble's left border + padding
+	// Use full viewport width; -2 accounts for the bubble's left-border + padding only.
 	msgWidth := max(cv.Viewport.Width-2, 20)
 
 	for _, m := range cv.Messages {
@@ -156,46 +173,21 @@ func (cv *ChatView) renderMessages() string {
 			content := renderContent(m.Content, msgWidth)
 			bubble := styles.UserBubble.Width(msgWidth).Render(content)
 			sb.WriteString(label + "\n" + bubble + "\n")
-
 		case "assistant":
-			label := styles.AssistantLabel.Render("  cowork")
+			cursor := ""
 			if m.Partial {
-				label = styles.AssistantLabel.Render("  cowork ▌")
+				cursor = "▌"
 			}
+			label := styles.AssistantLabel.Render("  cowork" + cursor)
 			content := renderContent(m.Content, msgWidth)
 			bubble := styles.AssistantBubble.Width(msgWidth).Render(content)
 			sb.WriteString(label + "\n" + bubble + "\n")
-
 		case "system":
 			msg := styles.Muted.Render("  · " + m.Content)
 			sb.WriteString(msg + "\n")
 		}
 	}
 	return sb.String()
-}
-
-// Render draws the full chat view (viewport + input).
-
-const (
-	borderX = 2 // 1px border × 2 sisi AppBorder
-	padX    = 2 // 1px padding × 2 sisi dari Panel style
-)
-
-func (cv *ChatView) Render() string {
-	cv.Input.SetWidth(cv.Width - 8)
-	sep := styles.Subtle.Render(strings.Repeat("─", cv.Width-2))
-
-	inputLabel := styles.Subtle.Render("  ❯ ")
-	inputBox := styles.InputBoxFocused.
-		Width(cv.Width - borderX - padX - 2). // -2 = border input itu sendiri
-		Render(cv.Input.View())
-
-	return strings.Join([]string{
-		cv.Viewport.View(),
-		sep,
-		inputLabel,
-		inputBox,
-	}, "\n")
 }
 
 // wrapText does simple word-wrap at maxWidth characters.
