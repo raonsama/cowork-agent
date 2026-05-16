@@ -103,12 +103,12 @@ func (v *WelcomeView) Render() string {
 		return styles.Accent.Render(" Welcome back " + v.Username + "!")
 	}
 
-	// Outer border wraps both panels.
-	innerW := v.Width - 4  // 2px border + 2px outer pad
-	innerH := v.Height - 2 // top/bottom border
+	// AppBorder adds 2 lines (top+bottom) and 4 columns (left+right × border+pad).
+	innerW := v.Width - 4
+	innerH := v.Height - 2
 
 	leftW := innerW * 2 / 5
-	rightW := innerW - leftW - 1 // -1 for the divider
+	rightW := innerW - leftW - 1 // -1 for the vertical divider glyph
 
 	left := v.renderLeft(leftW, innerH)
 	divider := v.renderDivider(innerH)
@@ -117,11 +117,13 @@ func (v *WelcomeView) Render() string {
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, divider, right)
 
 	return styles.AppBorder.
-		Width(v.Width - 4).
+		Width(innerW).
 		Height(innerH).
 		Render(body)
 }
 
+// renderLeft renders the identity panel (mascot, model info, project path)
+// vertically centered within the available height h.
 func (v *WelcomeView) renderLeft(w, h int) string {
 	welcome := lipgloss.NewStyle().
 		Bold(true).Foreground(styles.ColorText).
@@ -144,28 +146,22 @@ func (v *WelcomeView) renderLeft(w, h int) string {
 	modelLine := styles.Subtle.Render(v.ModelName) +
 		styles.Muted.Render(" with ") + modeLabel
 	pathLine := styles.Blue.Render(v.ProjectPath)
-
 	info := lipgloss.NewStyle().Width(w).Align(lipgloss.Center).
 		Render(modelLine + "\n" + pathLine)
 
 	inner := lipgloss.JoinVertical(
 		lipgloss.Center,
-		welcome,
-		"",
-		mascot,
-		"",
-		info,
+		welcome, "", mascot, "", info,
 	)
 
-	// Fix #4: vertically center the left panel block.
+	// Vertically center using explicit top padding derived from measured height.
 	innerH := lipgloss.Height(inner)
 	topPad := max((h-innerH)/2, 0)
-	btmPad := max(h-innerH-topPad, 0)
 
 	return lipgloss.NewStyle().
 		Width(w).
-		PaddingTop(topPad).
-		PaddingBottom(btmPad).
+		Height(h).
+		PaddingTop(topPad). // lipgloss padding — no string hackery
 		Render(inner)
 }
 

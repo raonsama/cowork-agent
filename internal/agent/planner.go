@@ -114,25 +114,30 @@ func (p *Planner) RefinePlan(ctx context.Context, plan *Plan, failedStep Step, e
 	return revised, nil
 }
 
-// parsePlan extracts JSON from potentially dirty LLM output.
+// parsePlan extracts and decodes a Plan JSON object from raw LLM output.
+// Handles markdown code fences and embedded JSON gracefully.
 func parsePlan(raw string) (*Plan, error) {
-	// Strip markdown code fences if present
 	raw = stripJSON(raw)
 
+	// Fast path: try direct unmarshal first.
 	var plan Plan
-	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
-		// Try to find the JSON object in free-form text
-		start := strings.Index(raw, "{")
-		end := strings.LastIndex(raw, "}")
-		if start == -1 || end == -1 || end <= start {
-			return nil, fmt.Errorf("no JSON found in response")
-		}
-		if err2 := json.Unmarshal([]byte(raw[start:end+1]), &plan); err2 != nil {
-			return nil, fmt.Errorf("parse plan: %w", err2)
+	if err := json.Unmarshal([]byte(raw), &plan); err == nil {
+		if len(plan.Steps) > 0 {
+			return &plan, nil
 		}
 	}
+
+	// Slow path: find the outermost JSON object in free-form text.
+	start := strings.Index(raw, "{")
+	end := strings.LastIndex(raw, "}")
+	if start == -1 || end <= start {
+		return nil, fmt.Errorf("no JSON object found in planner response")
+	}
+	if err := json.Unmarshal([]byte(raw[start:end+1]), &plan); err != nil {
+		return nil, fmt.Errorf("parse plan json: %w", err)
+	}
 	if len(plan.Steps) == 0 {
-		return nil, fmt.Errorf("plan has no steps")
+		return nil, fmt.Errorf("parsed plan contains no steps")
 	}
 	return &plan, nil
 }

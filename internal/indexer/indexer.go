@@ -61,14 +61,16 @@ func (idx *Indexer) Progress() <-chan Progress {
 	return idx.progressCh
 }
 
-// IndexProject walks root and indexes all supported files.
+// IndexProject walks root, hashing and symbolising every supported file.
+// Progress is sent on the channel returned by Progress(); the channel is
+// closed when indexing completes or after an error.
 func (idx *Indexer) IndexProject(root string) error {
 	defer close(idx.progressCh)
 
 	var files []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil // skip inaccessible paths
+			return nil
 		}
 		if d.IsDir() {
 			if idx.ignoredDirs[d.Name()] || strings.HasPrefix(d.Name(), ".") {
@@ -82,17 +84,15 @@ func (idx *Indexer) IndexProject(root string) error {
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("walk: %w", err)
+		return fmt.Errorf("walk %s: %w", root, err)
 	}
 
 	total := len(files)
-	idx.progressCh <- Progress{Total: total, Done: 0}
+	idx.progressCh <- Progress{Total: total}
 
-	// Worker pool
-	type job struct{ path string }
-	jobCh := make(chan job, total)
+	jobCh := make(chan string, total)
 	for _, f := range files {
-		jobCh <- job{f}
+		jobCh <- f
 	}
 	close(jobCh)
 
@@ -103,17 +103,17 @@ func (idx *Indexer) IndexProject(root string) error {
 	)
 
 	var wg sync.WaitGroup
-	for i := 0; i < idx.workerCount; i++ {
+	for range idx.workerCount {
 		wg.Go(func() {
-			for j := range jobCh {
-				sym, err := idx.indexFile(j.path)
+			for path := range jobCh {
+				sym, err := idx.indexFile(path)
 				mu.Lock()
 				done++
 				symbols += sym
 				idx.progressCh <- Progress{
 					Total:   total,
 					Done:    done,
-					Current: j.path,
+					Current: path,
 					Symbols: symbols,
 					Error:   err,
 				}
@@ -244,9 +244,8 @@ func extractBody(lines []string, start, end int) string {
 // ── Go parser ──
 
 var (
-	reGoFunc  = regexp.MustCompile(`^func\s+(\([^)]+\)\s+)?(\w+)\s*\(`)
-	reGoType  = regexp.MustCompile(`^type\s+(\w+)\s+`)
-	reGoConst = regexp.MustCompile(`^\s*(\w+)\s*=`)
+	reGoFunc = regexp.MustCompile(`^func\s+(\([^)]+\)\s+)?(\w+)\s*\(`)
+	reGoType = regexp.MustCompile(`^type\s+(\w+)\s+`)
 )
 
 func parseGo(path string, fileID int64) ([]*SymbolRecord, error) {

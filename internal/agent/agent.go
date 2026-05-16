@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/raonsama/cowork-agent/internal/config"
@@ -58,6 +59,7 @@ type Agent struct {
 	thermal  *thermal.Monitor
 	termux   *termux.Bridge
 	eventCh  chan Event
+	mu       sync.Mutex // guards eventCh against PrepareRun/emit races
 }
 
 // New constructs the Agent with all sub-systems wired up.
@@ -93,17 +95,27 @@ func (a *Agent) Close() {
 	a.thermal.Stop()
 }
 
+// PrepareRun resets context state and opens a fresh event channel.
+// Must be called before each Run invocation. Thread-safe.
 func (a *Agent) PrepareRun() <-chan Event {
+	a.mu.Lock()
 	a.eventCh = make(chan Event, 64)
+	ch := a.eventCh
+	a.mu.Unlock()
+
 	a.planner.ctx.Reset()
 	a.verifier.ctx.Reset()
-	return a.eventCh
+	return ch
 }
 
-// Run executes the full cowork loop for a given task description.
-// It is designed to run in its own goroutine; the TUI consumes Events().
+// Run executes the full cowork loop for task. Designed for its own goroutine;
+// the TUI consumes events via Events(). Captures the channel at entry to
+// avoid races if PrepareRun is called again while this goroutine is still live.
 func (a *Agent) Run(ctx context.Context, task string) {
-	defer close(a.eventCh)
+	a.mu.Lock()
+	ch := a.eventCh
+	a.mu.Unlock()
+	defer close(ch)
 
 	a.thermal.Start()
 	startTime := time.Now()
@@ -408,9 +420,17 @@ func (a *Agent) searchContext(query string) []llm.CodeSnippet {
 	return snippets
 }
 
+// emit sends an event without blocking. Uses the mutex-guarded channel
+// so it is safe to call from within Run even after a PrepareRun.
 func (a *Agent) emit(e Event) {
+	a.mu.Lock()
+	ch := a.eventCh
+	a.mu.Unlock()
+	if ch == nil {
+		return
+	}
 	select {
-	case a.eventCh <- e:
+	case ch <- e:
 	default:
 	}
 }

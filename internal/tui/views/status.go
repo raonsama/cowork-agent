@@ -12,101 +12,104 @@ import (
 	"github.com/raonsama/cowork-agent/internal/tui/styles"
 )
 
-// StatusBar holds all data needed to render the bottom status strip.
+// StatusBar holds all runtime data rendered in the bottom strip.
 type StatusBar struct {
 	Width int
 
-	// Left segment
-	ProjectPath string // e.g. "~/my-project"
+	// Left
+	ProjectPath string
 
-	// Center segments
-	ModelName   string // e.g. "Opus 4.6"
-	ContextUsed int    // tokens used
-	ContextMax  int    // tokens available
+	// Centre
+	ModelName   string
+	Phase       string
+	ContextUsed int
+	ContextMax  int
 	CostUSD     float64
 
-	// Right segments
-	GitBranch string // e.g. "feature/auth(+3)"
-	ThinkMode bool   // true = "high effort" / "think"
+	// Right
+	GitBranch string
+	ThinkMode bool
 	PlanMode  bool
 
-	// Thermal (shown in muted if not throttled)
+	// Thermal
 	TempC      float64
 	CPUPercent float64
 	Throttled  bool
 }
 
 const (
-	sepChar  = " | "
 	barWidth = 14
 )
 
-// Render returns the full-width status bar string.
-// Fix #3: add thermal indicator when throttled; all segments sourced from
-// live StatusBar fields rebuilt every tick via rebuildStatus().
+// Render returns the full-width status bar string, rebuilt on every frame.
 func (s *StatusBar) Render() string {
-	sep := styles.StatusSep.Render(sepChar)
+	sep := styles.StatusSep.Render(" │ ")
 
+	// --- left cluster ---
 	pathSeg := styles.StatusPath.Render("■ " + s.ProjectPath)
 	modelSeg := styles.StatusModel.Render(s.ModelName)
-	ctxSeg := s.renderContext()
-	costSeg := styles.StatusCost.Render(fmt.Sprintf("$ Cost:$%.2f", s.CostUSD))
-	branchSeg := styles.StatusBranch.Render("🌿 " + s.GitBranch)
 
-	// Fix #3: show live temperature / CPU when throttled.
-	thermalSeg := ""
-	if s.Throttled {
-		thermalSeg = sep + styles.StatusCost.Render(
-			fmt.Sprintf("🌡%.0f°C  CPU%.0f%%", s.TempC, s.CPUPercent),
-		)
-	} else if s.TempC > 0 {
-		thermalSeg = sep + styles.StatusPath.Render(
-			fmt.Sprintf("%.0f°C", s.TempC),
-		)
+	// Live phase badge — only shown when the agent is actively running.
+	phaseSeg := ""
+	if s.Phase != "" && s.Phase != "idle" && s.Phase != "done" && s.Phase != "error" {
+		if ps, ok := styles.PhaseBadge[s.Phase]; ok {
+			phaseSeg = sep + ps.Render(styles.PhaseIcon[s.Phase]+" "+s.Phase)
+		}
 	}
 
+	ctxSeg := s.renderContext()
+	costSeg := styles.StatusCost.Render(fmt.Sprintf("$%.4f", s.CostUSD))
+	branchSeg := styles.StatusBranch.Render("⎇ " + s.GitBranch)
+
+	thermalSeg := s.renderThermal(sep)
 	modeSeg := s.renderMode()
 
-	left := pathSeg + sep + modelSeg + sep + ctxSeg + sep + costSeg + sep + branchSeg + thermalSeg
-	right := modeSeg
+	left := strings.Join([]string{
+		pathSeg, sep, modelSeg, phaseSeg, sep, ctxSeg, sep, costSeg, sep, branchSeg, thermalSeg,
+	}, "")
 
+	// Pad between left and right.
 	leftW := lipgloss.Width(left)
-	rightW := lipgloss.Width(right)
+	rightW := lipgloss.Width(modeSeg)
 	pad := max(s.Width-leftW-rightW-2, 1)
 
-	row := " " + left + strings.Repeat(" ", pad) + right + " "
+	row := " " + left + strings.Repeat(" ", pad) + modeSeg + " "
 	return styles.StatusBar.Width(s.Width).Render(row)
 }
 
-// renderContext produces "Context: [████░░░░░░] 35%".
+// renderContext produces "Context [████░░] 35%".
 func (s *StatusBar) renderContext() string {
 	if s.ContextMax == 0 {
-		return styles.StatusPath.Render("Context: –")
+		return styles.StatusPath.Render("Ctx –")
 	}
-	pct := float64(s.ContextUsed) / float64(s.ContextMax)
-	if pct > 1 {
-		pct = 1
-	}
+	pct := min(float64(s.ContextUsed)/float64(s.ContextMax), 1.0)
 	filled := int(pct * barWidth)
 	empty := barWidth - filled
 
 	bar := styles.ContextBarFill.Render(strings.Repeat("█", filled)) +
 		styles.ContextBarEmpty.Render(strings.Repeat("░", empty))
 
-	pctLabel := styles.StatusPath.Render(fmt.Sprintf(" %d%%", int(pct*100)))
-
-	return styles.StatusPath.Render("Context: [") + bar +
-		styles.StatusPath.Render("]") + pctLabel
+	return styles.StatusPath.Render("Ctx [") + bar +
+		styles.StatusPath.Render(fmt.Sprintf("] %d%%", int(pct*100)))
 }
 
-// renderMode produces the right-most "● high /effort" or "● no-think" indicator.
+// renderThermal returns a thermal segment when temperature data is available.
+func (s *StatusBar) renderThermal(sep string) string {
+	if s.Throttled {
+		return sep + styles.StatusCost.Render(
+			fmt.Sprintf("🌡%.0f°C CPU%.0f%%", s.TempC, s.CPUPercent),
+		)
+	}
+	if s.TempC > 0 {
+		return sep + styles.StatusPath.Render(fmt.Sprintf("%.0f°C", s.TempC))
+	}
+	return ""
+}
+
+// renderMode returns the rightmost think/plan indicator dot.
 func (s *StatusBar) renderMode() string {
 	if s.ThinkMode {
-		dot := styles.ThinkOn.Render("●")
-		label := styles.ThinkOn.Render(" high /effort")
-		return dot + label
+		return styles.ThinkOn.Render("● high /effort")
 	}
-	dot := styles.ThinkOff.Render("●")
-	label := styles.ThinkOff.Render(" no-think")
-	return dot + label
+	return styles.ThinkOff.Render("● no-think")
 }

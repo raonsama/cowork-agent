@@ -5,6 +5,7 @@
 package views
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -87,25 +88,59 @@ func (m *CommandMenu) Selected() *Command {
 	return &c
 }
 
-// Render draws the menu as a floating box; maxW constrains its width.
-func (m *CommandMenu) Render(maxW int) string {
+// RenderPopup draws the command popup centered over maxW.
+// Items are capped at 8 visible entries to avoid overflow on small terminals.
+func (m *CommandMenu) RenderPopup(width int) string {
 	items := m.Filtered()
-	if len(items) == 0 || !m.Visible {
-		return ""
-	}
 
 	var sb strings.Builder
-	for i, c := range items {
-		name := lipgloss.NewStyle().Foreground(styles.ColorOrange).Bold(true).Render(c.Name)
-		desc := styles.Muted.Render("  " + c.Desc)
-		line := name + desc
-		if i == m.Cursor {
-			line = styles.MenuItemSelected.Render(c.Name) + styles.Muted.Render("  "+c.Desc)
-		}
-		sb.WriteString("  " + line + "\n")
+
+	// Title + filter hint dalam satu baris.
+	title := styles.PanelTitle.Render("  Commands")
+	hint := ""
+	if m.Filter != "" {
+		hint = styles.Muted.Render("  /" + m.Filter)
+	} else {
+		hint = styles.Muted.Render("  type to filter")
+	}
+	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Left, title, hint) + "\n\n")
+
+	const maxVisible = 8
+	visible := items
+	if len(visible) > maxVisible {
+		visible = visible[:maxVisible]
 	}
 
-	return styles.MenuBox.Width(min(maxW, 52)).Render(strings.TrimRight(sb.String(), "\n"))
+	if len(visible) == 0 {
+		sb.WriteString(styles.Muted.Render("  no commands match") + "\n")
+	} else {
+		for i, c := range visible {
+			if i == m.Cursor {
+				// Baris terpilih: background highlight, full width.
+				row := styles.MenuItemSelected.
+					Width(width - 4).
+					Render(c.Name + "   " + c.Desc)
+				sb.WriteString(row + "\n")
+			} else {
+				name := lipgloss.NewStyle().
+					Foreground(styles.ColorOrange).Bold(true).
+					Render("  " + c.Name)
+				desc := styles.Muted.Render("   " + c.Desc)
+				sb.WriteString(name + desc + "\n")
+			}
+		}
+	}
+
+	if len(items) > maxVisible {
+		sb.WriteString("\n" + styles.Muted.Render(
+			fmt.Sprintf("  … %d more", len(items)-maxVisible),
+		) + "\n")
+	}
+
+	// Footer hint.
+	sb.WriteString("\n" + styles.Muted.Render("  ↑↓ navigate   enter select   esc close"))
+
+	return styles.MenuBox.Width(width).Render(strings.TrimRight(sb.String(), "\n"))
 }
 
 // ── File Picker ───────────────────────────────────────────────────────────────
@@ -164,54 +199,46 @@ func (fp *FilePicker) Selected() string {
 	return items[fp.Cursor]
 }
 
-// Render draws the file picker box.
-func (fp *FilePicker) Render(maxW int) string {
+// RenderPopup draws the file picker popup centered over maxW.
+func (fp *FilePicker) RenderPopup(width int) string {
 	items := fp.Filtered()
-	if len(items) == 0 || !fp.Visible {
-		return ""
-	}
-
-	const maxShow = 8
-	start := 0
-	if fp.Cursor >= maxShow {
-		start = fp.Cursor - maxShow + 1
-	}
-	end := min(start+maxShow, len(items))
 
 	var sb strings.Builder
-	sb.WriteString(styles.PanelTitle.Render(" @ Mention file") + "\n")
 
-	for i := start; i < end; i++ {
-		f := items[i]
-		line := styles.Subtle.Render(f)
-		if i == fp.Cursor {
-			line = styles.MenuItemSelected.Render(" " + f)
-		} else {
-			line = "  " + line
+	title := styles.PanelTitle.Render("  Mention file")
+	hint := ""
+	if fp.Filter != "" {
+		hint = styles.Muted.Render("  @" + fp.Filter)
+	} else {
+		hint = styles.Muted.Render("  type to filter")
+	}
+	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Left, title, hint) + "\n\n")
+
+	if len(items) == 0 {
+		sb.WriteString(styles.Muted.Render("  no files match") + "\n")
+	} else {
+		const maxShow = 8
+		start := max(fp.Cursor-maxShow+1, 0)
+		end := min(start+maxShow, len(items))
+
+		for i := start; i < end; i++ {
+			if i == fp.Cursor {
+				sb.WriteString(
+					styles.MenuItemSelected.Width(width-4).Render(" "+items[i]) + "\n",
+				)
+			} else {
+				sb.WriteString("  " + styles.Subtle.Render(items[i]) + "\n")
+			}
 		}
-		sb.WriteString(line + "\n")
+
+		if len(items) > maxShow {
+			sb.WriteString("\n" + styles.Muted.Render(
+				fmt.Sprintf("  … %d files total", len(items)),
+			) + "\n")
+		}
 	}
 
-	if len(items) > maxShow {
-		sb.WriteString(styles.Muted.Render(
-			"  … " + itoa(len(items)) + " files total\n",
-		))
-	}
+	sb.WriteString("\n" + styles.Muted.Render("  ↑↓ navigate   enter insert   esc close"))
 
-	return styles.MenuBox.Width(min(maxW, 46)).Render(strings.TrimRight(sb.String(), "\n"))
-}
-
-func itoa(n int) string {
-	if n < 0 {
-		return "0"
-	}
-	s := ""
-	for n > 0 {
-		s = string(rune('0'+n%10)) + s
-		n /= 10
-	}
-	if s == "" {
-		return "0"
-	}
-	return s
+	return styles.MenuBox.Width(width).Render(strings.TrimRight(sb.String(), "\n"))
 }
