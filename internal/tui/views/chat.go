@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/raonsama/cowork-agent/internal/tui/styles"
 )
 
@@ -31,11 +32,21 @@ type ChatView struct {
 // NewChatView constructs a ChatView with sensible defaults.
 func NewChatView(width, height int) ChatView {
 	ta := textarea.New()
-	ta.Placeholder = "Type a task… (Enter to send, Ctrl+C to quit)"
+	ta.Placeholder = "" // kosong — prompt glyph sudah cukup sebagai penanda
 	ta.CharLimit = 4000
-	ta.SetWidth(width - 4)
-	ta.SetHeight(3)
+	ta.SetWidth(width - 6)
+	ta.SetHeight(2)
 	ta.ShowLineNumbers = false
+	ta.FocusedStyle.Base = lipgloss.NewStyle().Background(styles.ColorBg).Foreground(styles.ColorText)
+	ta.BlurredStyle.Base = lipgloss.NewStyle().Background(styles.ColorBg).Foreground(styles.ColorMuted)
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle().Background(styles.ColorBg)
+	ta.BlurredStyle.CursorLine = lipgloss.NewStyle().Background(styles.ColorBg)
+
+	// Hapus semua border bawaan bubbles/textarea.
+	noBorder := lipgloss.NewStyle().Border(lipgloss.Border{})
+	ta.FocusedStyle.Base = ta.FocusedStyle.Base.Inherit(noBorder)
+	ta.BlurredStyle.Base = ta.BlurredStyle.Base.Inherit(noBorder)
+
 	ta.Focus()
 
 	vp := viewport.New(width-2, height-8)

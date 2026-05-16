@@ -293,9 +293,10 @@ func findClosingBrace(lines []string, start int) int {
 	depth := 0
 	for i := start; i < len(lines) && i < start+200; i++ {
 		for _, c := range lines[i] {
-			if c == '{' {
+			switch c {
+			case '{':
 				depth++
-			} else if c == '}' {
+			case '}':
 				depth--
 				if depth == 0 {
 					return i

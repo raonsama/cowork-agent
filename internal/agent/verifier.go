@@ -113,11 +113,3 @@ func heuristicVerdict(output string) Verdict {
 	}
 	return Verdict{Passed: true, Reason: "No error signals detected (heuristic)"}
 }
-
-func truncateOutput(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	half := max / 2
-	return s[:half] + "\n…[truncated]…\n" + s[len(s)-half:]
-}

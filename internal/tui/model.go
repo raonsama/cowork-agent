@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/raonsama/cowork-agent/internal/agent"
 	"github.com/raonsama/cowork-agent/internal/thermal"
 	"github.com/raonsama/cowork-agent/internal/tui/styles"
@@ -47,11 +48,12 @@ type Model struct {
 	planMode  bool
 
 	// Input and history ring-buffer
-	input     textarea.Model
-	inputHist []string
-	histIdx   int    // -1 = live; ≥0 = replaying history
-	histBuf   string // draft saved while navigating history
-	cancelFn  context.CancelFunc
+	input          textarea.Model
+	inputHist      []string
+	histIdx        int    // -1 = live; ≥0 = replaying history
+	histBuf        string // draft saved while navigating history
+	cancelFn       context.CancelFunc
+	inputLineCount int
 
 	// Overlays
 	menu   views.CommandMenu
@@ -99,29 +101,49 @@ func newModel(ag *agent.Agent, initialTask string) Model {
 	sp.Style = styles.SpinnerStyle
 
 	ta := textarea.New()
-	ta.Placeholder = "Ask anything… (/ for commands, @ to mention files)"
+	ta.Placeholder = ""
 	ta.CharLimit = 8000
-	ta.SetHeight(2)
 	ta.ShowLineNumbers = false
+	ta.SetHeight(2)
+
+	// Terminal-style: tidak ada border, background solid ColorBg.
+	solidBg := lipgloss.NewStyle().Background(styles.ColorBg)
+	textStyle := solidBg.Foreground(styles.ColorText)
+	mutedStyle := solidBg.Foreground(styles.ColorMuted)
+	noBorder := lipgloss.NewStyle().
+		Background(styles.ColorBg).
+		Border(lipgloss.Border{})
+
+	ta.FocusedStyle.Base = noBorder.Foreground(styles.ColorText)
+	ta.FocusedStyle.CursorLine = textStyle
+	ta.FocusedStyle.Placeholder = mutedStyle
+	ta.FocusedStyle.EndOfBuffer = mutedStyle
+
+	ta.BlurredStyle.Base = noBorder.Foreground(styles.ColorMuted)
+	ta.BlurredStyle.CursorLine = mutedStyle
+	ta.BlurredStyle.Placeholder = mutedStyle
+	ta.BlurredStyle.EndOfBuffer = mutedStyle
+
 	ta.Focus()
 
 	projectPath := resolveProjectPath(ag.Cfg().ProjectRoot)
 
 	m := Model{
-		mode:        ModeWelcome,
-		ag:          ag,
-		spinner:     sp,
-		input:       ta,
-		histIdx:     -1,
-		phase:       "idle",
-		showLogs:    false,
-		contextMax:  ag.Cfg().ContextWindow,
-		projectPath: projectPath,
-		gitBranch:   readGitBranch(ag.Cfg().ProjectRoot),
-		gitVersion:  readGitVersion(),
-		menu:        views.NewCommandMenu(),
-		picker:      views.NewFilePicker(nil),
-		welcome:     views.NewWelcomeView(80, 20),
+		mode:           ModeWelcome,
+		ag:             ag,
+		spinner:        sp,
+		input:          ta,
+		inputLineCount: 2,
+		histIdx:        -1,
+		phase:          "idle",
+		showLogs:       false,
+		contextMax:     ag.Cfg().ContextWindow,
+		projectPath:    projectPath,
+		gitBranch:      readGitBranch(ag.Cfg().ProjectRoot),
+		gitVersion:     readGitVersion(),
+		menu:           views.NewCommandMenu(),
+		picker:         views.NewFilePicker(nil),
+		welcome:        views.NewWelcomeView(80, 20),
 	}
 
 	m.welcome.Username = "RAON"
@@ -159,8 +181,15 @@ func (m *Model) pushHistory(prompt string) {
 	}
 }
 
-// rebuildStatus recomputes the status bar from current model state.
-// Called on every Update tick so the bar is always fresh.
+// dynamicInputH returns the total rendered height of the input section:
+// 1 prompt line + textarea lines + 2 vertical padding.
+func (m *Model) dynamicInputH() int {
+	lines := max(m.inputLineCount, 2)
+	return lines + 3
+}
+
+// rebuildStatus recomputes the status bar snapshot from live model state.
+// Must be called on every Update tick.
 func (m *Model) rebuildStatus() {
 	used := 0
 	for _, msg := range m.chat.Messages {
@@ -172,10 +201,11 @@ func (m *Model) rebuildStatus() {
 		Width:       m.width,
 		ProjectPath: m.projectPath,
 		ModelName:   m.ag.Cfg().DefaultModel,
+		Phase:       m.phase, // ← was missing; caused static status bar
 		ContextUsed: m.contextUsed,
 		ContextMax:  m.contextMax,
 		CostUSD:     m.sessionCostUSD,
-		GitBranch:   m.gitBranch, // updated live in Update on branch events
+		GitBranch:   m.gitBranch,
 		ThinkMode:   m.thinkMode,
 		PlanMode:    m.planMode,
 		TempC:       m.thermalSt.TempCelsius,

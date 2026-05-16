@@ -1,4 +1,4 @@
-// Package tui — Bubble Tea View renderer and all layout helpers.
+// Package tui — Bubble Tea View renderer and layout helpers.
 package tui
 
 import (
@@ -10,62 +10,56 @@ import (
 
 const (
 	borderSides    = 2
-	inputH         = 7
 	contentMarginX = 2
 )
 
+// View is the root Bubble Tea render entry point.
 func (m Model) View() string {
 	if !m.ready {
 		return styles.Accent.Render("\n  Initializing CoworkAgent…")
 	}
 
-	// Popup mode: tampilkan overlay centered, bukan inline.
-	// Background disamakan dengan ColorBg agar transisi tidak mencolok.
+	// Overlays: dim the entire terminal, centre the popup over a dark backdrop.
 	if m.menu.Visible {
-		popup := m.menu.RenderPopup(min(m.width-8, 60))
-		return lipgloss.Place(
-			m.width, m.height,
-			lipgloss.Center, lipgloss.Center,
-			popup,
-			lipgloss.WithWhitespaceBackground(styles.ColorBg),
-			lipgloss.WithWhitespaceChars(" "),
-		)
+		return m.renderOverlay(m.menu.RenderPopup(min(m.width-8, 60)))
 	}
 	if m.picker.Visible {
-		popup := m.picker.RenderPopup(min(m.width-8, 52))
-		return lipgloss.Place(
-			m.width, m.height,
-			lipgloss.Center, lipgloss.Center,
-			popup,
-			lipgloss.WithWhitespaceBackground(styles.ColorBg),
-			lipgloss.WithWhitespaceChars(" "),
-		)
+		return m.renderOverlay(m.picker.RenderPopup(min(m.width-8, 52)))
 	}
 
 	return m.renderBase()
 }
 
+// renderOverlay centres popup over a dimmed, stippled background.
+func (m Model) renderOverlay(popup string) string {
+	return lipgloss.Place(
+		m.width, m.height,
+		lipgloss.Center, lipgloss.Center,
+		popup,
+	)
+}
+
+// renderBase composes the full layout: header → content → divider → input → divider → status.
 func (m Model) renderBase() string {
 	header := m.renderHeader()
 	statusBar := m.status.Render()
 
 	bodyH := m.height - lipgloss.Height(statusBar)
-	panelOuterH := max(bodyH-lipgloss.Height(header)-1-inputH-1, 4)
+	inputSectH := m.dynamicInputH()
+	panelOuterH := max(bodyH-lipgloss.Height(header)-1-inputSectH-1, 4)
 	panelInnerH := panelOuterH - borderSides
 	contentW := m.width - contentMarginX*2 - 2
 
 	wrapper := lipgloss.NewStyle().PaddingLeft(contentMarginX)
 
 	var body string
-	var dividerTopMargin int
 
 	if m.mode == ModeWelcome && len(m.chat.Messages) == 0 {
 		headerH := lipgloss.Height(header)
 		statusH := lipgloss.Height(statusBar)
 
-		// innerH = ruang bersih antara bawah header dan atas input box.
-		// 2 = dua divider (atas & bawah input).
-		innerH := m.height - headerH - statusH - 2 - inputH
+		// Available vertical space between header and input box.
+		innerH := m.height - headerH - statusH - inputSectH
 
 		const naturalH = 18
 		welcomeH := min(naturalH, max(innerH, 4))
@@ -73,16 +67,9 @@ func (m Model) renderBase() string {
 		m.welcome.Width = m.width - 2
 		m.welcome.Height = welcomeH
 
-		// Posisikan welcome box tepat di tengah innerH.
-		topPad := max((innerH-welcomeH)/2, 0)
-
-		welcomeBlock := lipgloss.NewStyle().
-			PaddingTop(topPad).
-			Render(m.welcome.Render())
-
-		body = wrapper.Render(strings.Join([]string{header, welcomeBlock}, "\n"))
-		dividerTopMargin = 0
-
+		// Place welcome block flush below the header (no centering gap).
+		welcomeBlock := m.welcome.Render()
+		body = wrapper.PaddingTop((innerH - welcomeH) / 2).Render(header + "\n" + welcomeBlock)
 	} else {
 		chatW := contentW
 		logW := 0
@@ -115,60 +102,70 @@ func (m Model) renderBase() string {
 			panels = chatPanel
 		}
 
-		sections := []string{header, panels}
-		body = wrapper.Render(strings.Join(sections, "\n"))
+		body = wrapper.Render(strings.Join([]string{header, panels}, "\n"))
 	}
 
 	inputSection := wrapper.Render(m.renderInput(contentW))
 
+	// Small top margin on the pre-input divider gives breathing room.
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		body,
-		m.renderDivider(dividerTopMargin),
+		m.renderDivider(1),
 		inputSection,
 		m.renderDivider(0),
 		statusBar,
 	)
 }
 
+// renderHeader renders the full-width title rule: "── CoworkAgent vX.Y ────".
 func (m Model) renderHeader() string {
 	ver := m.gitVersion
 	if ver == "" {
 		ver = "dev"
 	}
-	line := styles.PanelDividerMute.PaddingLeft(1).Render("───")
-	fill := strings.Repeat("─", max(m.width-24-len(ver), 0))
+	left := styles.PanelDividerMute.PaddingLeft(1).Render("───")
+	fill := strings.Repeat("─", max(m.width-23-len(ver), 0))
 	return lipgloss.JoinHorizontal(
 		lipgloss.Left,
-		line,
-		styles.HeaderBar.Render("Cowork Agent"),
+		left,
+		styles.HeaderBar.Render("CoworkAgent"),
 		styles.PanelDividerMute.Render(ver+" "),
 		styles.PanelDividerMute.Render(fill),
 	)
 }
 
+// renderInput renders a minimal terminal-style prompt line with optional
+// live phase badge, followed by the textarea on the next line.
 func (m Model) renderInput(width int) string {
-	m.input.SetWidth(width - 4)
+	m.input.SetWidth(width - 6)
 
-	active := m.phase != "" && m.phase != "idle" && m.phase != "done" && m.phase != "error"
-	phaseLabel := ""
-	if active {
+	// Build the prompt glyph line: "›" + optional phase badge.
+	promptGlyph := styles.InputPrompt.Render("")
+
+	phasePart := ""
+	if active := m.phase != "" && m.phase != "idle" && m.phase != "done" && m.phase != "error"; active {
 		phaseStyle, ok := styles.PhaseBadge[m.phase]
 		if !ok {
 			phaseStyle = styles.Muted
 		}
 		icon := styles.PhaseIcon[m.phase]
-		phaseLabel = " " + styles.SpinnerStyle.Render(m.spinner.View()) +
+		phasePart = "  " + styles.SpinnerStyle.Render(m.spinner.View()) +
 			" " + phaseStyle.Render(icon+" "+m.phase)
 	}
 
-	prompt := styles.InputPrompt.Render("")
-	return styles.InputBox.
+	promptLine := promptGlyph + phasePart
+
+	return styles.InputArea.
 		Width(width).
-		Render(prompt + phaseLabel + "\n" + m.input.View())
+		Render(promptLine + "\n" + m.input.View())
 }
 
+// renderDivider renders a full-width horizontal rule with an optional top margin.
 func (m Model) renderDivider(topMargin int) string {
 	line := strings.Repeat("─", max(m.width, 0))
-	return styles.PanelDividerMute.Margin(topMargin, 0, 0, 0).Render(line)
+	return lipgloss.NewStyle().
+		Foreground(styles.ColorMuted).
+		Margin(topMargin, 0, 0, 0).
+		Render(line)
 }

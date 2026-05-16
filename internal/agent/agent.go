@@ -20,46 +20,46 @@ import (
 	"github.com/raonsama/cowork-agent/pkg/reporter"
 )
 
-// Phase labels for UI status reporting.
+// Phase labels emitted in Event so the TUI can render live phase badges.
 type Phase string
 
 const (
-	PhaseIdle     Phase = "idle"
-	PhasePlan     Phase = "planning"
-	PhaseSearch   Phase = "searching"
-	PhaseExecute  Phase = "executing"
-	PhaseVerify   Phase = "verifying"
 	PhaseCommit   Phase = "committing"
 	PhaseDone     Phase = "done"
 	PhaseError    Phase = "error"
+	PhaseExecute  Phase = "executing"
+	PhaseIdle     Phase = "idle"
+	PhasePlan     Phase = "planning"
+	PhaseSearch   Phase = "searching"
 	PhaseThrottle Phase = "throttled"
+	PhaseVerify   Phase = "verifying"
 )
 
-// Event is emitted by the agent loop so the TUI can render live status.
+// Event is broadcast on the event channel so the TUI can render live status.
 type Event struct {
-	Phase      Phase
-	StepID     int
-	StepDesc   string
-	ToolName   string
-	ToolOutput string
-	Message    string
 	Branch     string
 	Err        error
 	Final      *reporter.Report
+	Message    string
+	Phase      Phase
+	StepDesc   string
+	StepID     int
+	ToolName   string
+	ToolOutput string
 }
 
 // Agent is the autonomous cowork engine.
 type Agent struct {
 	cfg      *config.Config
 	client   *llm.Client
-	planner  *Planner
-	verifier *Verifier
-	mcpSrv   *mcp.Server
 	db       *indexer.DB
-	thermal  *thermal.Monitor
-	termux   *termux.Bridge
 	eventCh  chan Event
-	mu       sync.Mutex // guards eventCh against PrepareRun/emit races
+	mcpSrv   *mcp.Server
+	mu       sync.Mutex // guards eventCh between PrepareRun/emit
+	planner  *Planner
+	termux   *termux.Bridge
+	thermal  *thermal.Monitor
+	verifier *Verifier
 }
 
 // New constructs the Agent with all sub-systems wired up.
@@ -74,28 +74,32 @@ func New(cfg *config.Config) (*Agent, error) {
 	return &Agent{
 		cfg:      cfg,
 		client:   client,
-		planner:  NewPlanner(client, cfg.ContextWindow),
-		verifier: NewVerifier(client, cfg.ContextWindow),
-		mcpSrv:   mcp.NewServer(cfg.ProjectRoot),
 		db:       db,
-		thermal:  thermal.NewMonitor(cfg.ThermalThresholdCelsius, cfg.CPUThrottlePercent),
-		termux:   termux.NewBridge(cfg.TermuxNotifyEnabled),
 		eventCh:  make(chan Event, 64),
+		mcpSrv:   mcp.NewServer(cfg.ProjectRoot),
+		planner:  NewPlanner(client, cfg.ContextWindow),
+		termux:   termux.NewBridge(cfg.TermuxNotifyEnabled),
+		thermal:  thermal.NewMonitor(cfg.ThermalThresholdCelsius, cfg.CPUThrottlePercent),
+		verifier: NewVerifier(client, cfg.ContextWindow),
 	}, nil
 }
 
-// Events returns the channel on which Agent broadcasts state events.
-func (a *Agent) Events() <-chan Event {
-	return a.eventCh
-}
+// Cfg returns the agent configuration (read-only).
+func (a *Agent) Cfg() *config.Config { return a.cfg }
 
-// Close releases resources.
+// Close releases database and thermal monitor resources.
 func (a *Agent) Close() {
 	a.db.Close()
 	a.thermal.Stop()
 }
 
-// PrepareRun resets context state and opens a fresh event channel.
+// Events returns the channel on which the agent broadcasts state events.
+func (a *Agent) Events() <-chan Event { return a.eventCh }
+
+// ThermalMonitor exposes the thermal monitor for TUI polling.
+func (a *Agent) ThermalMonitor() *thermal.Monitor { return a.thermal }
+
+// PrepareRun resets planner/verifier state and opens a fresh event channel.
 // Must be called before each Run invocation. Thread-safe.
 func (a *Agent) PrepareRun() <-chan Event {
 	a.mu.Lock()
@@ -108,9 +112,8 @@ func (a *Agent) PrepareRun() <-chan Event {
 	return ch
 }
 
-// Run executes the full cowork loop for task. Designed for its own goroutine;
-// the TUI consumes events via Events(). Captures the channel at entry to
-// avoid races if PrepareRun is called again while this goroutine is still live.
+// Run executes the full cowork loop for the given task.
+// Designed to run in its own goroutine; the TUI consumes events via Events().
 func (a *Agent) Run(ctx context.Context, task string) {
 	a.mu.Lock()
 	ch := a.eventCh
@@ -120,21 +123,18 @@ func (a *Agent) Run(ctx context.Context, task string) {
 	a.thermal.Start()
 	startTime := time.Now()
 
-	// ── Ping Ollama ───────────────────────────────────────
 	if err := a.client.Ping(ctx); err != nil {
 		a.emit(Event{Phase: PhaseError, Err: fmt.Errorf("ollama unreachable: %w", err)})
 		return
 	}
 
-	// ── Intent detection ──────────────────────────────────
-	// Conversational inputs (greetings, questions, short chitchat) are
-	// answered directly via LLM chat — no tool pipeline, no shadow branch.
+	// Conversational inputs skip the tool pipeline entirely.
 	if isConversational(task) {
 		a.runChat(ctx, task)
 		return
 	}
 
-	// ── Shadow workspace ──────────────────────────────────
+	// Isolate agent work on a shadow branch.
 	ws := shadow.NewWorkspace(a.cfg.ProjectRoot, a.cfg.BranchPrefix)
 	if err := ws.Begin(task); err != nil {
 		a.emit(Event{Phase: PhasePlan, Message: "⚠️  Shadow workspace unavailable — working on current branch"})
@@ -147,7 +147,6 @@ func (a *Agent) Run(ctx context.Context, task string) {
 		a.emit(Event{Phase: PhasePlan, Branch: ws.BranchName(), Message: "Shadow branch: " + ws.BranchName()})
 	}
 
-	// ── Plan ──────────────────────────────────────────────
 	a.emit(Event{Phase: PhasePlan, Message: "Decomposing task into steps…"})
 
 	plan, err := a.planner.CreatePlan(ctx, task)
@@ -155,12 +154,10 @@ func (a *Agent) Run(ctx context.Context, task string) {
 		a.emit(Event{Phase: PhaseError, Err: err})
 		return
 	}
-
 	a.emit(Event{Phase: PhasePlan, Message: fmt.Sprintf("Plan ready: %d steps — %s", len(plan.Steps), plan.Summary)})
 
-	// ── Execution loop ────────────────────────────────────
-	log := []reporter.StepLog{}
-	maxRetries := 2
+	var stepLog []reporter.StepLog
+	const maxRetries = 2
 
 	for i := range plan.Steps {
 		step := &plan.Steps[i]
@@ -169,27 +166,19 @@ func (a *Agent) Run(ctx context.Context, task string) {
 		}
 
 		if a.thermal.IsThrottled() {
-			status := a.thermal.Current()
-			a.emit(Event{Phase: PhaseThrottle, Message: status.ThrottleMsg})
+			st := a.thermal.Current()
+			a.emit(Event{Phase: PhaseThrottle, Message: st.ThrottleMsg})
 			a.thermal.WaitIfThrottled(ctx.Done())
 		}
 
-		// Context search hanya jalan jika planner aktif — tanpa planner
-		// tidak ada cukup sinyal untuk query FTS yang bermakna.
-		contextBlock := ""
-		a.emit(Event{
-			Phase: PhaseSearch, StepID: step.ID, StepDesc: step.Description,
-			Message: "Searching relevant code context…",
-		})
-		snippets := a.searchContext(step.Description)
-		if len(snippets) > 0 {
-			cm := llm.NewContextManager(a.cfg.ContextWindow, "")
-			contextBlock = cm.InjectContext(snippets)
-		}
+		a.emit(Event{Phase: PhaseSearch, StepID: step.ID, StepDesc: step.Description, Message: "Searching relevant code context…"})
+		contextBlock := a.buildContextBlock(step.Description)
 
-		var toolResult mcp.ToolResult
-		var verdict Verdict
-		retries := 0
+		var (
+			toolResult mcp.ToolResult
+			verdict    Verdict
+			retries    int
+		)
 
 		for retries <= maxRetries {
 			toolCall, err := a.resolveToolCall(ctx, plan, step, contextBlock)
@@ -208,7 +197,6 @@ func (a *Agent) Run(ctx context.Context, task string) {
 
 			toolResult = a.mcpSrv.Dispatch(ctx, *toolCall)
 
-			// ── Verify (toggle-aware) ─────────────────────
 			a.emit(Event{Phase: PhaseVerify, StepID: step.ID, Message: "Verifying result…"})
 			verdict, _ = a.verifier.Verify(ctx, *step, toolResult.Output+toolResult.Error)
 
@@ -218,27 +206,20 @@ func (a *Agent) Run(ctx context.Context, task string) {
 
 			retries++
 			a.emit(Event{
-				Phase:   PhaseVerify,
-				StepID:  step.ID,
+				Phase: PhaseVerify, StepID: step.ID,
 				Message: fmt.Sprintf("⚠️  Retry %d/%d — %s", retries, maxRetries, verdict.Reason),
 			})
-
 			if retries == maxRetries {
 				plan, _ = a.planner.RefinePlan(ctx, plan, *step, verdict.Reason)
 			}
 
-			a.emit(Event{
-				Phase:      PhaseExecute,
-				StepID:     step.ID,
-				ToolName:   string(toolCall.Name),
-				ToolOutput: toolResult.Output,
-			})
+			a.emit(Event{Phase: PhaseExecute, StepID: step.ID, ToolName: string(toolCall.Name), ToolOutput: toolResult.Output})
 		}
 
 		step.Done = true
 		step.Result = toolResult.Output
 
-		log = append(log, reporter.StepLog{
+		stepLog = append(stepLog, reporter.StepLog{
 			ID:     step.ID,
 			Desc:   step.Description,
 			Tool:   string(toolResult.Tool),
@@ -255,7 +236,6 @@ func (a *Agent) Run(ctx context.Context, task string) {
 		})
 	}
 
-	// ── Commit ────────────────────────────────────────────
 	a.emit(Event{Phase: PhaseCommit, Message: "Committing changes to shadow branch…"})
 	diff, _ := ws.Diff()
 	stat, _ := ws.Stat()
@@ -266,7 +246,7 @@ func (a *Agent) Run(ctx context.Context, task string) {
 		Task:        task,
 		Branch:      ws.BranchName(),
 		BaseBranch:  ws.BaseBranch(),
-		Steps:       log,
+		Steps:       stepLog,
 		Diff:        diff,
 		DiffStat:    stat,
 		ElapsedSecs: int(elapsed.Seconds()),
@@ -274,13 +254,11 @@ func (a *Agent) Run(ctx context.Context, task string) {
 	}
 
 	a.emit(Event{Phase: PhaseDone, Final: rpt, Message: "Tugas selesai. Mimpimu sudah aman di kode ini, silakan lanjut rebahan. 🌙"})
-
 	_ = a.termux.NotifyTaskComplete(task, rpt.OneLiner())
 	a.termux.Vibrate(300)
 }
 
-// runChat handles conversational inputs that do not require tool execution.
-// It streams the LLM response token-by-token as a single assistant message.
+// runChat handles conversational inputs, streaming tokens without tool calls.
 func (a *Agent) runChat(ctx context.Context, input string) {
 	system := `You are CoworkAgent, a senior software engineer assistant.
 Answer the user's question or message naturally and concisely.
@@ -305,49 +283,43 @@ Do not use tool calls. Do not produce JSON plans.`
 	a.emit(Event{Phase: PhaseDone, Message: full.String()})
 }
 
-// isConversational returns true for inputs that are clearly not coding tasks:
-// short messages, greetings, questions without imperative action words, etc.
+// isConversational returns true for inputs that are greetings, short messages,
+// or questions without imperative coding verbs.
 func isConversational(input string) bool {
 	t := strings.TrimSpace(strings.ToLower(input))
 
-	// Very short inputs are almost never tasks.
 	if len([]rune(t)) < 20 {
 		return true
 	}
 
-	// Starts with a question word → conversational.
-	questionPrefixes := []string{
+	for _, prefix := range []string{
 		"apa ", "siapa ", "kapan ", "kenapa ", "mengapa ", "bagaimana ",
 		"what ", "who ", "when ", "why ", "how ", "is ", "are ", "can ",
 		"could ", "would ", "should ", "do you ", "did you ",
-	}
-	for _, p := range questionPrefixes {
-		if strings.HasPrefix(t, p) {
+	} {
+		if strings.HasPrefix(t, prefix) {
 			return true
 		}
 	}
 
-	// Greetings / chitchat keywords.
-	greetings := []string{
+	for _, g := range []string{
 		"hai", "hi", "hello", "halo", "hey", "hei",
 		"selamat", "pagi", "siang", "sore", "malam",
 		"thanks", "thank you", "terima kasih", "makasih",
-		"oke", "ok", "oke deh", "mantap", "keren", "good",
-	}
-	for _, g := range greetings {
+		"oke", "ok", "mantap", "keren", "good",
+	} {
 		if t == g || strings.HasPrefix(t, g+" ") || strings.HasSuffix(t, " "+g) {
 			return true
 		}
 	}
 
-	// Contains explicit task verbs → not conversational.
-	taskVerbs := []string{
+	// Explicit task verbs override all conversational signals.
+	for _, v := range []string{
 		"buat ", "create ", "add ", "fix ", "refactor ", "implement ",
 		"write ", "update ", "delete ", "remove ", "migrate ", "deploy ",
-		"run ", "build ", "test ", "generate ", "parse ", "tambah ",
-		"perbaiki ", "ubah ", "hapus ", "jalankan ",
-	}
-	for _, v := range taskVerbs {
+		"run ", "build ", "test ", "generate ", "parse ",
+		"tambah ", "perbaiki ", "ubah ", "hapus ", "jalankan ",
+	} {
 		if strings.Contains(t, v) {
 			return false
 		}
@@ -356,13 +328,13 @@ func isConversational(input string) bool {
 	return false
 }
 
-// resolveToolCall asks the LLM to produce the correct MCP tool call for a step.
+// resolveToolCall asks the LLM to select the correct MCP tool call for a step.
 func (a *Agent) resolveToolCall(ctx context.Context, plan *Plan, step *Step, codeCtx string) (*mcp.ToolCall, error) {
-	toolDefsBlock := a.mcpSrv.FormatToolDefsForPrompt()
+	toolDefs := a.mcpSrv.FormatToolDefsForPrompt()
 	planJSON, _ := json.MarshalIndent(plan, "", "  ")
 
 	prompt := strings.Join([]string{
-		toolDefsBlock,
+		toolDefs,
 		"",
 		"### Current Plan",
 		"```json",
@@ -377,11 +349,11 @@ func (a *Agent) resolveToolCall(ctx context.Context, plan *Plan, step *Step, cod
 		"Select the best tool and parameters. Respond with a single <tool_call> block.",
 	}, "\n")
 
-	systemPrompt := `You are an autonomous coding agent executing a task plan.
+	system := `You are an autonomous coding agent executing a task plan.
 For each step, respond with exactly one tool call inside <tool_call> tags.
 Do not add any other text.`
 
-	cm := llm.NewContextManager(a.cfg.ContextWindow, systemPrompt)
+	cm := llm.NewContextManager(a.cfg.ContextWindow, system)
 	cm.AddMessage("user", prompt)
 
 	resp, err := a.client.ChatSync(ctx, cm.Build(), llm.Options{Temperature: 0.1})
@@ -389,18 +361,27 @@ Do not add any other text.`
 		return nil, err
 	}
 
-	call, ok := mcp.ParseToolCall(resp)
-	if !ok {
-		// Fallback: best-effort parse from tool hint
-		return &mcp.ToolCall{
-			Name:   mcp.ToolKind(step.ToolHint),
-			Params: json.RawMessage(`{}`),
-		}, nil
+	if call, ok := mcp.ParseToolCall(resp); ok {
+		return call, nil
 	}
-	return call, nil
+	// Fallback: honour the planner's tool hint with empty params.
+	return &mcp.ToolCall{
+		Name:   mcp.ToolKind(step.ToolHint),
+		Params: json.RawMessage(`{}`),
+	}, nil
 }
 
-// searchContext queries the FTS index for snippets relevant to a query.
+// buildContextBlock fetches FTS snippets for a step and formats them for the prompt.
+func (a *Agent) buildContextBlock(query string) string {
+	snippets := a.searchContext(query)
+	if len(snippets) == 0 {
+		return ""
+	}
+	cm := llm.NewContextManager(a.cfg.ContextWindow, "")
+	return cm.InjectContext(snippets)
+}
+
+// searchContext queries the FTS index for code snippets relevant to query.
 func (a *Agent) searchContext(query string) []llm.CodeSnippet {
 	results, err := a.db.Search(query, 5)
 	if err != nil || len(results) == 0 {
@@ -408,11 +389,10 @@ func (a *Agent) searchContext(query string) []llm.CodeSnippet {
 	}
 	snippets := make([]llm.CodeSnippet, 0, len(results))
 	for _, r := range results {
-		lang := extToLang(r.FilePath)
 		snippets = append(snippets, llm.CodeSnippet{
 			FilePath:     r.FilePath,
 			FunctionName: r.Name,
-			Language:     lang,
+			Language:     extToLang(r.FilePath),
 			Content:      r.Body,
 			Score:        r.Score,
 		})
@@ -420,8 +400,7 @@ func (a *Agent) searchContext(query string) []llm.CodeSnippet {
 	return snippets
 }
 
-// emit sends an event without blocking. Uses the mutex-guarded channel
-// so it is safe to call from within Run even after a PrepareRun.
+// emit sends an event non-blocking, using the mutex-guarded channel.
 func (a *Agent) emit(e Event) {
 	a.mu.Lock()
 	ch := a.eventCh
@@ -433,33 +412,4 @@ func (a *Agent) emit(e Event) {
 	case ch <- e:
 	default:
 	}
-}
-
-// Cfg returns the agent's configuration.
-func (a *Agent) Cfg() *config.Config { return a.cfg }
-
-// ThermalMonitor returns the underlying thermal monitor (for TUI polling).
-func (a *Agent) ThermalMonitor() *thermal.Monitor { return a.thermal }
-
-// ─── helpers ─────────────────────────────────────────────
-
-func boolIcon(b bool) string {
-	if b {
-		return "✅"
-	}
-	return "❌"
-}
-
-func extToLang(path string) string {
-	m := map[string]string{
-		".go": "go", ".py": "python", ".ts": "typescript",
-		".js": "javascript", ".lua": "lua", ".rs": "rust",
-		".cpp": "cpp", ".c": "c", ".h": "c", ".java": "java",
-	}
-	for ext, lang := range m {
-		if strings.HasSuffix(path, ext) {
-			return lang
-		}
-	}
-	return "text"
 }

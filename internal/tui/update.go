@@ -41,10 +41,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		ev := agent.Event(msg)
 		m.phase = string(ev.Phase)
 
-		// Keep git branch in the status bar current.
 		if ev.Branch != "" {
 			m.branch = ev.Branch
-			m.gitBranch = ev.Branch // FIX: was never propagated
+			m.gitBranch = ev.Branch
 		}
 
 		switch ev.Phase {
@@ -73,18 +72,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if ev.Message != "" {
 				m.chat.AppendMessage("system", "🌡 "+ev.Message)
 			}
+		case agent.PhaseIdle:
+			// Streaming chat token from runChat — no badge, no tool label.
+			if ev.Message != "" && ev.ToolName == "" {
+				m.chat.StreamToken(ev.Message)
+			}
 		case agent.PhaseError:
 			if ev.Err != nil {
 				m.err = ev.Err
 				m.mode = ModeChat
+				m.phase = "error"
 				m.logs.Add(views.LevelError, "error", ev.Err.Error(), "")
 				m.chat.AppendMessage("system", "✗ Error: "+ev.Err.Error())
 				cmds = append(cmds, m.input.Focus())
-			}
-		case agent.PhaseIdle:
-			// Streaming chat token — no tool, no phase badge.
-			if ev.Message != "" && ev.ToolName == "" {
-				m.chat.StreamToken(ev.Message)
 			}
 		}
 
@@ -96,16 +96,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.input.Focus())
 		}
 
-		if ev.Phase == agent.PhaseDone && ev.Final == nil {
-			if ev.Message != "" {
-				m.chat.FinalizeStream()
-			}
+		// runChat done: finalize the streamed partial message.
+		if ev.Phase == agent.PhaseDone && ev.Final == nil && ev.Message != "" {
+			m.chat.FinalizeStream()
 			m.mode = ModeChat
 			m.phase = "done"
 			cmds = append(cmds, m.input.Focus())
 		}
 
-		// Log panel entries for every named event.
+		// Log every named event except raw streaming tokens.
 		if ev.Message != "" && (ev.Phase != agent.PhaseIdle || ev.ToolName != "") {
 			level := views.LevelInfo
 			switch {
@@ -119,7 +118,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logs.Add(level, string(ev.Phase), ev.Message, ev.ToolOutput)
 		}
 
-		// Re-queue listener unless the run has ended.
+		// Re-queue only while the agent run is still live.
 		if ev.Phase != agent.PhaseDone && ev.Phase != agent.PhaseError {
 			cmds = append(cmds, waitForAgentEvent(m.ag.Events()))
 		}
@@ -235,6 +234,8 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			break
 		}
 		m.input.Reset()
+		m.input.SetHeight(2)
+		m.inputLineCount = 2
 		m.histIdx = -1
 		m.histBuf = ""
 
@@ -272,6 +273,14 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var inputCmd tea.Cmd
 	m.input, inputCmd = m.input.Update(msg)
 	cmds = append(cmds, inputCmd)
+
+	newLineCount := strings.Count(m.input.Value(), "\n") + 1
+	newLineCount = max(min(newLineCount, 8), 2)
+	if newLineCount != m.inputLineCount {
+		m.inputLineCount = newLineCount
+		m.input.SetHeight(newLineCount)
+	}
+
 	return m, tea.Batch(cmds...)
 }
 
