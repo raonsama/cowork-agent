@@ -12,6 +12,8 @@ import (
 const (
 	borderSides    = 2
 	contentMarginX = 2
+	minContentW    = 20
+	minInputW      = 10
 )
 
 // View is the root Bubble Tea render entry point.
@@ -52,7 +54,9 @@ func (m Model) renderBase() string {
 	inputSectH := m.dynamicInputH()
 	panelOuterH := max(bodyH-lipgloss.Height(header)-1-inputSectH-1, 4)
 	panelInnerH := panelOuterH - borderSides
-	contentW := m.width - contentMarginX*2 - 2
+
+	// Guard against narrow terminals: never let the content column go negative.
+	contentW := max(m.width-contentMarginX*2-2, minContentW)
 
 	wrapper := lipgloss.NewStyle().PaddingLeft(contentMarginX)
 
@@ -62,31 +66,35 @@ func (m Model) renderBase() string {
 		headerH := lipgloss.Height(header)
 		statusH := lipgloss.Height(statusBar)
 
-		// Available vertical space between header and input box.
 		innerH := m.height - headerH - statusH - inputSectH
 
 		const naturalH = 18
 		welcomeH := min(naturalH, max(innerH, 4))
 
-		m.welcome.Width = m.width - 2
+		m.welcome.Width = max(m.width-2, 40)
 		m.welcome.Height = welcomeH
 
-		// Place welcome block flush below the header (no centering gap).
 		welcomeBlock := m.welcome.Render()
-		body = wrapper.PaddingTop((innerH - welcomeH) / 2).Render(header + "\n" + welcomeBlock)
+
+		// max(,0) prevents negative PaddingTop when terminal is very short.
+		topPad := max((innerH-welcomeH)/2, 0)
+
+		body = wrapper.PaddingTop(topPad).Render(header + "\n" + welcomeBlock)
 	} else {
 		chatW := contentW
 		logW := 0
 
 		if m.showLogs && m.width >= 100 && len(m.logs.Entries) > 0 {
 			logW = min(50, m.width/4)
-			chatW = contentW - logW - 2
+
+			// Guard: chatW must stay positive even if logW is unexpectedly large.
+			chatW = max(contentW-logW-2, minContentW/2)
 		}
 
 		m.chat.Width = chatW
 		m.chat.Height = panelOuterH
-		m.chat.Viewport.SetWidth(chatW - borderSides)
-		m.chat.Viewport.SetHeight(panelInnerH)
+		m.chat.Viewport.SetWidth(max(chatW-borderSides, 1))
+		m.chat.Viewport.SetHeight(max(panelInnerH, 1))
 
 		chatPanel := styles.AppBorder.
 			Width(chatW).
@@ -98,7 +106,7 @@ func (m Model) renderBase() string {
 			m.logs.Width = logW
 			m.logs.Height = panelOuterH
 			logPanel := styles.AppBorder.
-				Width(logW - 2).
+				Width(max(logW-2, 1)).
 				Height(panelInnerH).
 				Render(m.logs.Render())
 			panels = lipgloss.JoinHorizontal(lipgloss.Top, chatPanel, "  ", logPanel)
@@ -111,7 +119,6 @@ func (m Model) renderBase() string {
 
 	inputSection := wrapper.Render(m.renderInput(contentW))
 
-	// Small top margin on the pre-input divider gives breathing room.
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		body,
@@ -142,10 +149,10 @@ func (m Model) renderHeader() string {
 // renderInput renders a minimal terminal-style prompt line with optional
 // live phase badge, followed by the textarea on the next line.
 func (m Model) renderInput(width int) string {
-	m.input.SetWidth(width - 6)
+	// Guard: textarea width must be positive.
+	m.input.SetWidth(max(width-6, minInputW))
 
-	// Build the prompt glyph line: "›" + optional phase badge.
-	promptGlyph := styles.InputPrompt.Render("")
+	promptGlyph := styles.InputPrompt.Render("")
 
 	phasePart := ""
 	if active := m.phase != "" && m.phase != "idle" && m.phase != "done" && m.phase != "error"; active {

@@ -40,12 +40,14 @@ func extToLang(path string) string {
 	}
 }
 
-// truncateOutput trims a string to max bytes, inserting an ellipsis in the
-// middle so both the beginning and end of the output remain visible.
+// truncateOutput trims to max runes with a middle ellipsis so both the
+// beginning and end of the output remain visible. Rune-safe: never splits
+// multi-byte UTF-8 sequences.
 func truncateOutput(s string, max int) string {
-	if len(s) <= max {
+	r := []rune(s)
+	if len(r) <= max {
 		return s
 	}
 	half := max / 2
-	return s[:half] + "\n…[truncated]…\n" + s[len(s)-half:]
+	return string(r[:half]) + "\n…[truncated]…\n" + string(r[len(r)-half:])
 }

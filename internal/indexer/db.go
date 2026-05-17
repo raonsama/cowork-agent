@@ -17,15 +17,23 @@ type DB struct {
 }
 
 // OpenDB opens (or creates) the index database at the given path.
+// MaxOpenConns(1) serialises all writes through a single connection,
+// preventing "database is locked" errors under concurrent indexing.
 func OpenDB(path string) (*DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create db dir: %w", err)
 	}
 
-	conn, err := sql.Open("sqlite3", path+"?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=4000")
+	// _busy_timeout gives transient lock waits up to 5 s before erroring.
+	dsn := path + "?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=4000&_busy_timeout=5000"
+	conn, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
+
+	// Single connection prevents concurrent-write "database is locked" errors.
+	conn.SetMaxOpenConns(1)
+	conn.SetMaxIdleConns(1)
 
 	db := &DB{conn: conn, path: path}
 	if err := db.migrate(); err != nil {
@@ -119,9 +127,11 @@ type SymbolRecord struct {
 	Body      string
 }
 
-// UpsertFile inserts or updates a file record, returning its ID.
+// UpsertFile inserts or updates a file record, returning its row ID.
+// Uses a post-upsert SELECT to handle the ON CONFLICT path correctly
+// (LastInsertId returns 0 for SQLite UPDATE branches).
 func (db *DB) UpsertFile(f *FileRecord) (int64, error) {
-	res, err := db.conn.Exec(`
+	_, err := db.conn.Exec(`
 		INSERT INTO files (path, ext, size, mod_time, hash, indexed_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET
@@ -133,11 +143,9 @@ func (db *DB) UpsertFile(f *FileRecord) (int64, error) {
 		return 0, err
 	}
 
-	// Try to get the ID (insert or existing)
 	var id int64
-	row := db.conn.QueryRow(`SELECT id FROM files WHERE path = ?`, f.Path)
-	if err := row.Scan(&id); err != nil {
-		id, _ = res.LastInsertId()
+	if err := db.conn.QueryRow(`SELECT id FROM files WHERE path = ?`, f.Path).Scan(&id); err != nil {
+		return 0, fmt.Errorf("get file id for %q: %w", f.Path, err)
 	}
 	return id, nil
 }

@@ -5,6 +5,7 @@ package views
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
@@ -38,7 +39,6 @@ func NewChatView(width, height int) ChatView {
 	ta.SetHeight(2)
 	ta.ShowLineNumbers = false
 
-	// v2: mutate via Styles()/SetStyles()
 	noBorder := lipgloss.NewStyle().Border(lipgloss.Border{})
 	ts := ta.Styles()
 	ts.Focused.Base = lipgloss.NewStyle().Background(styles.ColorBg).Foreground(styles.ColorText).Inherit(noBorder)
@@ -212,21 +212,29 @@ func wrapText(s string, maxWidth int) string {
 	}
 	var result strings.Builder
 	for line := range strings.SplitSeq(s, "\n") {
-		if len(line) <= maxWidth {
+		if utf8.RuneCountInString(line) <= maxWidth {
 			result.WriteString(line + "\n")
 			continue
 		}
 		words := strings.Fields(line)
-		cur := ""
+		var cur strings.Builder
+		curW := 0
 		for _, w := range words {
-			if len(cur)+len(w)+1 > maxWidth {
-				result.WriteString(strings.TrimRight(cur, " ") + "\n")
-				cur = ""
+			wLen := utf8.RuneCountInString(w)
+			if curW > 0 && curW+wLen+1 > maxWidth {
+				result.WriteString(cur.String() + "\n")
+				cur.Reset()
+				curW = 0
 			}
-			cur += w + " "
+			if curW > 0 {
+				cur.WriteByte(' ')
+				curW++
+			}
+			cur.WriteString(w)
+			curW += wLen
 		}
-		if cur != "" {
-			result.WriteString(strings.TrimRight(cur, " ") + "\n")
+		if cur.Len() > 0 {
+			result.WriteString(cur.String() + "\n")
 		}
 	}
 	return strings.TrimRight(result.String(), "\n")

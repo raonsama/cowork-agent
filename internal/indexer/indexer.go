@@ -107,10 +107,13 @@ func (idx *Indexer) IndexProject(root string) error {
 		wg.Go(func() {
 			for path := range jobCh {
 				sym, err := idx.indexFile(path)
+
+				// Build snapshot under mutex, then send outside it to avoid
+				// holding the lock while the channel may block.
 				mu.Lock()
 				done++
 				symbols += sym
-				idx.progressCh <- Progress{
+				p := Progress{
 					Total:   total,
 					Done:    done,
 					Current: path,
@@ -118,6 +121,8 @@ func (idx *Indexer) IndexProject(root string) error {
 					Error:   err,
 				}
 				mu.Unlock()
+
+				idx.progressCh <- p
 			}
 		})
 	}
@@ -157,12 +162,13 @@ func (idx *Indexer) indexFile(path string) (int, error) {
 		return 0, err
 	}
 
-	// If file existed before, clean old symbols
+	// File existed before — purge stale symbols before re-inserting.
 	if existingID != 0 {
-		_ = idx.db.DeleteSymbolsForFile(fileID)
+		if err := idx.db.DeleteSymbolsForFile(fileID); err != nil {
+			return 0, fmt.Errorf("delete old symbols for %q: %w", path, err)
+		}
 	}
 
-	// Parse symbols
 	symbols, err := parseSymbols(path, fileID, filepath.Ext(path))
 	if err != nil {
 		return 0, err
@@ -207,8 +213,7 @@ func parseSymbols(path string, fileID int64, ext string) ([]*SymbolRecord, error
 	if !ok {
 		return nil, nil
 	}
-	syms, err := parser(path, fileID)
-	return syms, err
+	return parser(path, fileID)
 }
 
 // readLines reads a file into a string slice.

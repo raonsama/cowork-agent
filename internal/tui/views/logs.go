@@ -72,7 +72,11 @@ func (lp *LogPanel) ScrollDown(n int) {
 // Render produces the log panel string.
 func (lp *LogPanel) Render() string {
 	title := styles.PanelTitle.Render("  Logs")
-	availH := lp.Height - 2 // subtract title + border
+
+	// Guard against zero/negative dimensions from extreme terminal sizes.
+	panelW := max(lp.Width-2, 1)
+	panelH := max(lp.Height-2, 1)
+	availH := max(panelH-1, 1) // reserve 1 line for the title
 
 	rendered := make([]string, 0, len(lp.Entries))
 	for _, e := range lp.Entries {
@@ -93,8 +97,8 @@ func (lp *LogPanel) Render() string {
 
 	body := strings.Join(visible, "\n")
 	return styles.Panel.
-		Width(lp.Width - 2). // kurangi 1px border × 2 dari AppBorder yang sudah wrap ini
-		Height(lp.Height - 2).
+		Width(panelW).
+		Height(panelH).
 		Render(title + "\n" + body)
 }
 
@@ -131,23 +135,27 @@ func (lp *LogPanel) renderEntry(e LogEntry) string {
 	msg := ts + " " + phase + msgStyle.Render(prefix+e.Message)
 
 	if e.Detail != "" {
-		detail := trimLines(e.Detail, 3, lp.Width-6)
+		detail := trimLines(e.Detail, 3, max(lp.Width-6, 10))
 		msg += "\n" + styles.LogOutput.Render(detail)
 	}
 
 	return msg
 }
 
-// trimLines limits detail output to maxLines, each truncated to maxWidth.
+// trimLines limits detail output to maxLines, each truncated to maxWidth runes.
+// Rune-safe: never slices a multi-byte UTF-8 sequence at a byte boundary.
 func trimLines(s string, maxLines, maxWidth int) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
 	if len(lines) > maxLines {
 		lines = lines[:maxLines]
 		lines = append(lines, "…")
 	}
-	for i, l := range lines {
-		if len(l) > maxWidth {
-			lines[i] = l[:maxWidth] + "…"
+	if maxWidth > 0 {
+		for i, l := range lines {
+			runes := []rune(l)
+			if len(runes) > maxWidth {
+				lines[i] = string(runes[:maxWidth]) + "…"
+			}
 		}
 	}
 	return strings.Join(lines, "\n")
