@@ -6,8 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/cursor"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 	"github.com/raonsama/cowork-agent/internal/agent"
 	"github.com/raonsama/cowork-agent/internal/thermal"
 	"github.com/raonsama/cowork-agent/internal/tui/views"
@@ -28,7 +29,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case fileListMsg:
 		m.picker = views.NewFilePicker([]string(msg))
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.menu.Visible {
 			return m.updateMenu(msg)
 		}
@@ -36,6 +37,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateFilePicker(msg)
 		}
 		return m.updateNormal(msg)
+
+	case cursor.BlinkMsg:
+		var inputCmd tea.Cmd
+		m.input, inputCmd = m.input.Update(msg)
+		cmds = append(cmds, inputCmd)
 
 	case agentEventMsg:
 		ev := agent.Event(msg)
@@ -144,7 +150,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // updateNormal handles keys when no overlay is open.
-func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateNormal(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg.String() {
@@ -285,7 +291,7 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // updateMenu handles keys while the "/" command overlay is open.
-func (m Model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateMenu(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "ctrl+c":
 		m.menu.Visible = false
@@ -306,7 +312,7 @@ func (m Model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.menu.Filter = m.menu.Filter[:len(m.menu.Filter)-1]
 		}
 	default:
-		if msg.Type == tea.KeyRunes {
+		if msg.Text != "" {
 			m.menu.Filter += msg.String()
 		}
 	}
@@ -314,7 +320,7 @@ func (m Model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // updateFilePicker handles keys while the "@" file picker overlay is open.
-func (m Model) updateFilePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateFilePicker(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "ctrl+c":
 		m.picker.Visible = false
@@ -335,7 +341,7 @@ func (m Model) updateFilePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.picker.Visible = false
 		}
 	default:
-		if msg.Type == tea.KeyRunes {
+		if msg.Text != "" {
 			m.picker.Filter += msg.String()
 		}
 	}

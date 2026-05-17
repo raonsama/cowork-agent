@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/viewport"
+	"charm.land/lipgloss/v2"
 	"github.com/raonsama/cowork-agent/internal/tui/styles"
 )
 
@@ -32,24 +32,28 @@ type ChatView struct {
 // NewChatView constructs a ChatView with sensible defaults.
 func NewChatView(width, height int) ChatView {
 	ta := textarea.New()
-	ta.Placeholder = "" // kosong — prompt glyph sudah cukup sebagai penanda
+	ta.Placeholder = ""
 	ta.CharLimit = 4000
 	ta.SetWidth(width - 6)
 	ta.SetHeight(2)
 	ta.ShowLineNumbers = false
-	ta.FocusedStyle.Base = lipgloss.NewStyle().Background(styles.ColorBg).Foreground(styles.ColorText)
-	ta.BlurredStyle.Base = lipgloss.NewStyle().Background(styles.ColorBg).Foreground(styles.ColorMuted)
-	ta.FocusedStyle.CursorLine = lipgloss.NewStyle().Background(styles.ColorBg)
-	ta.BlurredStyle.CursorLine = lipgloss.NewStyle().Background(styles.ColorBg)
 
-	// Hapus semua border bawaan bubbles/textarea.
+	// v2: mutate via Styles()/SetStyles()
 	noBorder := lipgloss.NewStyle().Border(lipgloss.Border{})
-	ta.FocusedStyle.Base = ta.FocusedStyle.Base.Inherit(noBorder)
-	ta.BlurredStyle.Base = ta.BlurredStyle.Base.Inherit(noBorder)
+	ts := ta.Styles()
+	ts.Focused.Base = lipgloss.NewStyle().Background(styles.ColorBg).Foreground(styles.ColorText).Inherit(noBorder)
+	ts.Blurred.Base = lipgloss.NewStyle().Background(styles.ColorBg).Foreground(styles.ColorMuted).Inherit(noBorder)
+	ts.Focused.CursorLine = lipgloss.NewStyle().Background(styles.ColorBg)
+	ts.Blurred.CursorLine = lipgloss.NewStyle().Background(styles.ColorBg)
+	ta.SetStyles(ts)
 
 	ta.Focus()
 
-	vp := viewport.New(width-2, height-8)
+	// v2: viewport.New uses functional options
+	vp := viewport.New(
+		viewport.WithWidth(width-2),
+		viewport.WithHeight(height-8),
+	)
 	vp.SetContent("")
 
 	return ChatView{
@@ -175,7 +179,7 @@ func (cv *ChatView) refreshViewport() {
 func (cv *ChatView) renderMessages() string {
 	var sb strings.Builder
 	// Use full viewport width; -2 accounts for the bubble's left-border + padding only.
-	msgWidth := max(cv.Viewport.Width-2, 20)
+	msgWidth := max(cv.Viewport.Width()-2, 20)
 
 	for _, m := range cv.Messages {
 		switch m.Role {

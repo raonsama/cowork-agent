@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/raonsama/cowork-agent/internal/agent"
 	"github.com/raonsama/cowork-agent/internal/thermal"
 	"github.com/raonsama/cowork-agent/internal/tui/styles"
@@ -106,23 +106,21 @@ func newModel(ag *agent.Agent, initialTask string) Model {
 	ta.ShowLineNumbers = false
 	ta.SetHeight(2)
 
-	// Terminal-style: tidak ada border, background solid ColorBg.
 	solidBg := lipgloss.NewStyle().Background(styles.ColorBg)
 	textStyle := solidBg.Foreground(styles.ColorText)
 	mutedStyle := solidBg.Foreground(styles.ColorMuted)
-	noBorder := lipgloss.NewStyle().
-		Background(styles.ColorBg).
-		Border(lipgloss.Border{})
+	noBorder := lipgloss.NewStyle().Background(styles.ColorBg).Border(lipgloss.Border{})
 
-	ta.FocusedStyle.Base = noBorder.Foreground(styles.ColorText)
-	ta.FocusedStyle.CursorLine = textStyle
-	ta.FocusedStyle.Placeholder = mutedStyle
-	ta.FocusedStyle.EndOfBuffer = mutedStyle
-
-	ta.BlurredStyle.Base = noBorder.Foreground(styles.ColorMuted)
-	ta.BlurredStyle.CursorLine = mutedStyle
-	ta.BlurredStyle.Placeholder = mutedStyle
-	ta.BlurredStyle.EndOfBuffer = mutedStyle
+	ts := ta.Styles()
+	ts.Focused.Base = noBorder.Foreground(styles.ColorText)
+	ts.Focused.CursorLine = textStyle
+	ts.Focused.Placeholder = mutedStyle
+	ts.Focused.EndOfBuffer = mutedStyle
+	ts.Blurred.Base = noBorder.Foreground(styles.ColorMuted)
+	ts.Blurred.CursorLine = mutedStyle
+	ts.Blurred.Placeholder = mutedStyle
+	ts.Blurred.EndOfBuffer = mutedStyle
+	ta.SetStyles(ts)
 
 	ta.Focus()
 
@@ -164,6 +162,7 @@ func newModel(ag *agent.Agent, initialTask string) Model {
 
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
+		textarea.Blink,
 		m.spinner.Tick,
 		tickEvery(2*time.Second),
 		loadFileList(m.ag.Cfg().ProjectRoot),

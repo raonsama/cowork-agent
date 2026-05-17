@@ -4,7 +4,8 @@ package tui
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/raonsama/cowork-agent/internal/tui/styles"
 )
 
@@ -14,20 +15,23 @@ const (
 )
 
 // View is the root Bubble Tea render entry point.
-func (m Model) View() string {
-	if !m.ready {
-		return styles.Accent.Render("\n  Initializing CoworkAgent…")
+func (m Model) View() tea.View {
+	var content string
+	switch {
+	case !m.ready:
+		content = styles.Accent.Render("\n  Initializing CoworkAgent…")
+	case m.menu.Visible:
+		content = m.renderOverlay(m.menu.RenderPopup(min(m.width-8, 60)))
+	case m.picker.Visible:
+		content = m.renderOverlay(m.picker.RenderPopup(min(m.width-8, 52)))
+	default:
+		content = m.renderBase()
 	}
 
-	// Overlays: dim the entire terminal, centre the popup over a dark backdrop.
-	if m.menu.Visible {
-		return m.renderOverlay(m.menu.RenderPopup(min(m.width-8, 60)))
-	}
-	if m.picker.Visible {
-		return m.renderOverlay(m.picker.RenderPopup(min(m.width-8, 52)))
-	}
-
-	return m.renderBase()
+	v := tea.NewView(content)
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
 }
 
 // renderOverlay centres popup over a dimmed, stippled background.
@@ -81,8 +85,8 @@ func (m Model) renderBase() string {
 
 		m.chat.Width = chatW
 		m.chat.Height = panelOuterH
-		m.chat.Viewport.Width = chatW - borderSides
-		m.chat.Viewport.Height = panelInnerH
+		m.chat.Viewport.SetWidth(chatW - borderSides)
+		m.chat.Viewport.SetHeight(panelInnerH)
 
 		chatPanel := styles.AppBorder.
 			Width(chatW).

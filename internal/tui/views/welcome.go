@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/raonsama/cowork-agent/internal/tui/styles"
 )
 
@@ -63,8 +63,8 @@ func NewWelcomeView(w, h int) WelcomeView {
 }
 
 // robot returns the orange pixel-art mascot as a multi-line string.
-func robot(color lipgloss.Color) string {
-	orange := lipgloss.NewStyle().Foreground(color)
+func robot() string {
+	orange := lipgloss.NewStyle().Foreground(styles.ColorOrange)
 	lines := []string{
 		" ▄██████▄ ",
 		"███░░░░███",
@@ -132,7 +132,7 @@ func (v *WelcomeView) renderLeft(w, h int) string {
 
 	mascot := lipgloss.NewStyle().
 		Width(w).Align(lipgloss.Center).
-		Render(robot(styles.ColorOrange))
+		Render(robot())
 
 	modeLabel := styles.Muted.Render("No Think")
 	if v.ThinkMode {

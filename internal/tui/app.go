@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/raonsama/cowork-agent/internal/agent"
 	"github.com/raonsama/cowork-agent/internal/config"
 	"github.com/raonsama/cowork-agent/internal/indexer"
@@ -62,7 +62,7 @@ func (a *App) runTUI() error {
 	defer ag.Close()
 
 	model := newModel(ag, a.initialTask)
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(model)
 	_, err = p.Run()
 	return err
 }

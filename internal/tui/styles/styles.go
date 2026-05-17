@@ -3,7 +3,7 @@
 // warm orange/amber border and accent throughout.
 package styles
 
-import "github.com/charmbracelet/lipgloss"
+import "charm.land/lipgloss/v2"
 
 // ── Colour palette ────────────────────────────────────────────────────────────
 
